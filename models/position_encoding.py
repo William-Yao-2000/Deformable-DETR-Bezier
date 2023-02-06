@@ -71,16 +71,18 @@ class PositionEmbeddingLearned(nn.Module):
         nn.init.uniform_(self.col_embed.weight)
 
     def forward(self, tensor_list: NestedTensor):
-        x = tensor_list.tensors
+        x = tensor_list.tensors  # [b, c, h, w]
         h, w = x.shape[-2:]
-        i = torch.arange(w, device=x.device)
-        j = torch.arange(h, device=x.device)
-        x_emb = self.col_embed(i)
-        y_emb = self.row_embed(j)
+        i = torch.arange(w, device=x.device)  # [w,]
+        j = torch.arange(h, device=x.device)  # [h,]
+        x_emb = self.col_embed(i)  # [w, num_pos_feats]
+        y_emb = self.row_embed(j)  # [h, num_pos_feats]
         pos = torch.cat([
             x_emb.unsqueeze(0).repeat(h, 1, 1),
             y_emb.unsqueeze(1).repeat(1, w, 1),
         ], dim=-1).permute(2, 0, 1).unsqueeze(0).repeat(x.shape[0], 1, 1, 1)
+        # [h, w, num_pos_feats] -> [h, w, 2*num_pos_feats] -> [2*num_pos_feats, h, w] -> 
+        # [1, 2*num_pos_feats, h, w] -> [b, 2*num_pos_feats, h, w]
         return pos
 
 
