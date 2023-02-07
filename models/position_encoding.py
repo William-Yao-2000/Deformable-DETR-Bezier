@@ -60,7 +60,7 @@ class PositionEmbeddingLearned(nn.Module):
     """
     Absolute pos embedding, learned.
     """
-    def __init__(self, num_pos_feats=256):
+    def __init__(self, num_pos_feats=256):  # num_pos_feats == d_model // 2
         super().__init__()
         self.row_embed = nn.Embedding(50, num_pos_feats)
         self.col_embed = nn.Embedding(50, num_pos_feats)
@@ -81,8 +81,8 @@ class PositionEmbeddingLearned(nn.Module):
             x_emb.unsqueeze(0).repeat(h, 1, 1),
             y_emb.unsqueeze(1).repeat(1, w, 1),
         ], dim=-1).permute(2, 0, 1).unsqueeze(0).repeat(x.shape[0], 1, 1, 1)
-        # [h, w, num_pos_feats] -> [h, w, 2*num_pos_feats] -> [2*num_pos_feats, h, w] -> 
-        # [1, 2*num_pos_feats, h, w] -> [b, 2*num_pos_feats, h, w]
+        # [h, w, num_pos_feats] --> [h, w, d_model] --> [d_model, h, w] --> 
+        # [1, d_model, h, w] --> [b, d_model, h, w]
         return pos
 
 
