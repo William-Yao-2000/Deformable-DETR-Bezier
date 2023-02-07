@@ -85,7 +85,7 @@ class BackboneBase(nn.Module):
             self.strides = [32]
             self.num_channels = [2048]
         # 获取中间层的输出
-        # self.body 是一个字典，key 是 return_layers 里面的 value，value 是模型在 return_layers 
+        # self.body 是一个字典，key 是 return_layers 字典里面的 value，value 是模型在 return_layers 
         # 各个 key 对应层的输出
         self.body = IntermediateLayerGetter(backbone, return_layers=return_layers)
 
@@ -125,6 +125,7 @@ class Joiner(nn.Sequential):
 
     def forward(self, tensor_list: NestedTensor):
         xs = self[0](tensor_list)  # backbone(tensor_list)
+        # 结果是一个字典，key 是每层的名字，value 是每层输出的 NestedTensor
         out: List[NestedTensor] = []
         pos = []
         for name, x in sorted(xs.items()):  # x: NestedTensor
