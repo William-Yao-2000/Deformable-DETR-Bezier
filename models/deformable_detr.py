@@ -62,7 +62,8 @@ class DeformableDETR(nn.Module):
         if not two_stage:
             self.query_embed = nn.Embedding(num_queries, hidden_dim*2)  # TODO: 为什么要嵌入到 hidden_dim*2 这个大小呢
         # 提取不同大小的特征图？
-        # 感觉这一块应该是 backbone 与 transformer 之间的连接 
+        # 感觉这一块应该是 backbone 与 transformer 之间的连接
+        # 实际上初始化了 self.input_proj 
         if num_feature_levels > 1:
             num_backbone_outs = len(backbone.strides)  # 骨干网络输出的特征图的数量，3
             input_proj_list = []
@@ -105,8 +106,9 @@ class DeformableDETR(nn.Module):
             nn.init.constant_(proj[0].bias, 0)
 
         # 感觉下面这段代码是为了让模型能够输出所有 decoder 中间层的输出结果
-        # if two-stage, the last class_embed and bbox_embed is for region proposal generation
+        # if two-stage, the **last** class_embed and bbox_embed is for region proposal generation
         num_pred = (transformer.decoder.num_layers + 1) if two_stage else transformer.decoder.num_layers
+        # TODO: box refine 和 two-stage 的内容还没看
         if with_box_refine:
             # 深复制
             self.class_embed = _get_clones(self.class_embed, num_pred)
@@ -155,10 +157,10 @@ class DeformableDETR(nn.Module):
         masks = []
         for l, feat in enumerate(features):
             src, mask = feat.decompose()  # [bs, c_l, h_l, w_l], [bs, h_l, w_l]
-            srcs.append(self.input_proj[l](src)) # self.input_proj[l](src): [bs, d_model, h_l, w_l]
+            srcs.append(self.input_proj[l](src))  # self.input_proj[l](src): [bs, d_model, h_l, w_l]
             masks.append(mask)
             assert mask is not None
-        if self.num_feature_levels > len(srcs):
+        if self.num_feature_levels > len(srcs):  # 在backbone最后一层的基础上生成更小的特征图
             _len_srcs = len(srcs)
             for l in range(_len_srcs, self.num_feature_levels):
                 if l == _len_srcs:
@@ -173,6 +175,10 @@ class DeformableDETR(nn.Module):
                 srcs.append(src)
                 masks.append(mask)
                 pos.append(pos_l)
+                # len(srcs) == len(masks) == len(pos) == self.num_feature_levels
+                # srcs[l]: [bs, d_model, h_l, w_l]
+                # masks[l]: [bs, h_l, w_l]
+                # pos[l]: [bs, d_model, h_l, w_l]
 
         # transformer (encoder + decoder)
         query_embeds = None
@@ -485,7 +491,7 @@ def build(args):
     device = torch.device(args.device)
 
     # 创建 deformable-DETR 模型
-    backbone = build_backbone(args)
+    backbone = build_backbone(args)  # backbone + positional embedding
     transformer = build_deforamble_transformer(args)
     model = DeformableDETR(
         backbone,

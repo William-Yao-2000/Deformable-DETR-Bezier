@@ -134,6 +134,9 @@ class DeformableTransformer(nn.Module):
         lvl_pos_embed_flatten = []
         spatial_shapes = []
         for lvl, (src, mask, pos_embed) in enumerate(zip(srcs, masks, pos_embeds)):
+            # src: [bs, d_model, h_l, w_l]
+            # mask: [bs, h_l, w_l]
+            # pos_embed: [bs, d_model, h_l, w_l]
             bs, c, h, w = src.shape
             spatial_shape = (h, w)
             spatial_shapes.append(spatial_shape)
@@ -150,6 +153,7 @@ class DeformableTransformer(nn.Module):
         lvl_pos_embed_flatten = torch.cat(lvl_pos_embed_flatten, 1)  # [bs, \sum_{l=0}^{L-1} h_l * w_l, c]
         spatial_shapes = torch.as_tensor(spatial_shapes, dtype=torch.long, device=src_flatten.device)  # [L, 2]
         # 将多层特征图展平连接后，每层的起点对应展平向量的里面的 index
+        # 这里用 new_zeros 主要是为了保证 dtype 和 device 相同 
         level_start_index = torch.cat((spatial_shapes.new_zeros((1, )), spatial_shapes.prod(1).cumsum(0)[:-1]))  # [L,]（去掉了终点）
         # self.get_valid_ratio(m): mini-batch 中每张图片的宽和高上的有效值的比例，[bs, 2]
         # valid_ratios: 加了一个层数，在 dim=1 **扩维拼接**起来
@@ -259,14 +263,15 @@ class DeformableTransformerEncoder(nn.Module):
                      [1.5, 1.5, 1.5]]
             ref_x = [[0.5, 1.5, 2.5],
                      [0.5, 1.5, 2.5]]
+            shape: [h_l, w_l]
             """
             # valid_ratios: [bs, L, 2]
-            # valid_ratios[:, None, L, 1]: [bs, 1]
+            # valid_ratios[:, None, lvl, 1]: [bs, 1]
             # ref_y.reshape(-1)[None]: [h_l * w_l,] --> [1, h_l * w_l]
             # 感觉是用每张图片 padding 前的大小来对 meshgrid 做归一化？
-            ref_y = ref_y.reshape(-1)[None] / (valid_ratios[:, None, lvl, 1] * H_)
+            ref_y = ref_y.reshape(-1)[None] / (valid_ratios[:, None, lvl, 1] * H_)  # [bs, h_l * w_l]
             ref_x = ref_x.reshape(-1)[None] / (valid_ratios[:, None, lvl, 0] * W_)
-            ref = torch.stack((ref_x, ref_y), -1)  # [bs, h_l * w_l, 2]
+            ref = torch.stack((ref_x, ref_y), -1)  # [bs, h_l * w_l, 2]    每个batch中每张图片按照原有大小归一化后的网格坐标
             reference_points_list.append(ref)
         reference_points = torch.cat(reference_points_list, 1)  # [bs, \sum_{l=0}^{L-1} h_l * w_l, 2]
         # reference_points[:, :, None]: [bs, \sum_{l=0}^{L-1} h_l * w_l, 1, 2]
@@ -275,6 +280,16 @@ class DeformableTransformerEncoder(nn.Module):
         return reference_points  # [bs, \sum_{l=0}^{L-1} h_l * w_l, L, 2]
 
     def forward(self, src, spatial_shapes, level_start_index, valid_ratios, pos=None, padding_mask=None):
+        """forward function of deformable transformer ENCODER
+
+        Args:
+            src:                [bs, \sum_{l=0}^{L-1} h_l * w_l, d_model]
+            spatial_shapes:     [L, 2]
+            level_start_index:  [L,]
+            valid_ratios:       [bs, L, 2]
+            pos:                [bs, \sum_{l=0}^{L-1} h_l * w_l, d_model]
+            padding_mask:       [bs, \sum_{l=0}^{L-1} h_l * w_l]
+        """
         output = src
         reference_points = self.get_reference_points(spatial_shapes, valid_ratios, device=src.device) # [bs, \sum_{l=0}^{L-1} h_l * w_l, L, 2]
         for _, layer in enumerate(self.layers):
