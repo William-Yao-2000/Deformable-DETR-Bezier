@@ -140,7 +140,15 @@ import math
 # tgt_idx = torch.cat([tgt for (_, tgt) in indices])
 # print(tgt_idx)
 
-path = "./data/synthtext/SynthText/8/ballet_3_0.jpg"
-dir_num, file_name = path.split('/')[-2:]
-file_name = file_name[:-4]
-print(dir_num, file_name)
+# path = "./data/synthtext/SynthText/8/ballet_3_0.jpg"
+# dir_num, file_name = path.split('/')[-2:]
+# file_name = file_name[:-4]
+# print(dir_num, file_name)
+
+
+spatial_shapes = torch.tensor([[224, 224], [112, 112], [56, 56], [28, 28]])
+print(spatial_shapes.shape)
+print(spatial_shapes.new_zeros((1, )))
+print(spatial_shapes.prod(1))
+level_start_index = torch.cat((spatial_shapes.new_zeros((1, )), spatial_shapes.prod(1).cumsum(0)[:-1]))
+print(level_start_index)
