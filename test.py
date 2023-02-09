@@ -158,11 +158,24 @@ import torch.nn.functional as F
 # print(level_start_index)
 
 
-bs, num_queries, num_classes = 2, 10, 30
-src = torch.randn(bs, num_queries, num_classes)
-tgt = torch.randint(low=0, high=30, size=(bs, num_queries))
-tgt = torch.LongTensor(tgt)
-tgt_onehot = F.one_hot(tgt, num_classes=num_classes).float()
-print(tgt_onehot)
-ce_loss = F.binary_cross_entropy_with_logits(src, tgt_onehot, reduction="none")
-print(ce_loss.shape)
+# bs, num_queries, num_classes = 2, 6, 5
+# src = torch.randn(bs, num_queries, num_classes)
+# tgt = torch.randint(low=0, high=num_classes, size=(bs, num_queries))
+# tgt = torch.LongTensor(tgt)
+# tgt_onehot = F.one_hot(tgt, num_classes=num_classes).float()
+# print(src)
+# print(tgt_onehot)
+# ce_loss = F.binary_cross_entropy_with_logits(src, tgt_onehot, reduction="none")
+# print(ce_loss)
+
+
+# from PIL import Image
+# img = Image.open("vis/gt_temp/vis-8-ballet_3_0.png").convert('RGB')
+# print(img)
+
+
+box_num_sum = 18
+src_boxes = torch.rand(box_num_sum, 4)
+tgt_boxes = torch.rand(box_num_sum, 4)
+loss_bbox = F.l1_loss(src_boxes, tgt_boxes, reduction='none')
+print(loss_bbox.shape)
