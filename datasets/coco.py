@@ -34,7 +34,10 @@ class CocoDetection(TvCocoDetection):  # 坑人！注意 21 行，这个继承�
         img, target = super(CocoDetection, self).__getitem__(idx)
         image_id = self.ids[idx]
         target = {'image_id': image_id, 'annotations': target}
+        # target['annotations']: 列表，列表中的元素是 ann object dict
         img, target = self.prepare(img, target)  # 输入：图片和字典    输出：图片和处理过的字典
+        # target
+        #   key: 'image_id', 'boxes', 'labels', 'area', 'iscrowd', 'orig_size', 'size'
         if self._transforms is not None:
             img, target = self._transforms(img, target)  # 因为这个转换函数是经过复写的，所以可以输入 img 和 target
         return img, target
@@ -62,24 +65,26 @@ class ConvertCocoPolysToMask(object):
         self.return_masks = return_masks
 
     def __call__(self, image, target):
-        w, h = image.size
+        w, h = image.size  # 坑人..
 
         image_id = target["image_id"]
         image_id = torch.tensor([image_id])
 
-        anno = target["annotations"]
+        anno = target["annotations"]  # list(ann obj dict)
 
-        anno = [obj for obj in anno if 'iscrowd' not in obj or obj['iscrowd'] == 0]  # 排除 iscrowd==0 的列表项
+        anno = [obj for obj in anno if 'iscrowd' not in obj or obj['iscrowd'] == 0]
+        # 只选择没有键 iscrowd 或者键 iscrowd 对应的值为 0 的字典项
 
-        boxes = [obj["bbox"] for obj in anno]  # 每一项都是 4 个坐标
+        boxes = [obj["bbox"] for obj in anno]  # 每一项都是 4 个坐标, (x1, y1, w, h)
         # guard against no boxes via resizing
         boxes = torch.as_tensor(boxes, dtype=torch.float32).reshape(-1, 4)
         boxes[:, 2:] += boxes[:, :2]  # 将宽和高转换为右下角坐标
         boxes[:, 0::2].clamp_(min=0, max=w)
         boxes[:, 1::2].clamp_(min=0, max=h)
+        # [num_boxes, 4]
 
         classes = [obj["category_id"] for obj in anno]
-        classes = torch.tensor(classes, dtype=torch.int64)
+        classes = torch.tensor(classes, dtype=torch.int64)  # [num_boxes,]
 
         if self.return_masks:
             segmentations = [obj["segmentation"] for obj in anno]
@@ -93,6 +98,7 @@ class ConvertCocoPolysToMask(object):
             if num_keypoints:
                 keypoints = keypoints.view(num_keypoints, -1, 3)
 
+        # 去除无效的 box
         keep = (boxes[:, 3] > boxes[:, 1]) & (boxes[:, 2] > boxes[:, 0])
         boxes = boxes[keep]
         classes = classes[keep]
@@ -102,8 +108,8 @@ class ConvertCocoPolysToMask(object):
             keypoints = keypoints[keep]
 
         target = {}
-        target["boxes"] = boxes
-        target["labels"] = classes
+        target["boxes"] = boxes  # [num_boxes_, 4]
+        target["labels"] = classes  # [num_boxes_,]
         if self.return_masks:
             target["masks"] = masks
         target["image_id"] = image_id
@@ -113,12 +119,13 @@ class ConvertCocoPolysToMask(object):
         # for conversion to coco api
         area = torch.tensor([obj["area"] for obj in anno])
         iscrowd = torch.tensor([obj["iscrowd"] if "iscrowd" in obj else 0 for obj in anno])
-        target["area"] = area[keep]
+        target["area"] = area[keep]  # segmentation area
         target["iscrowd"] = iscrowd[keep]
 
         target["orig_size"] = torch.as_tensor([int(h), int(w)])
         target["size"] = torch.as_tensor([int(h), int(w)])
 
+        # target key: 'image_id', 'boxes', 'labels', 'area', 'iscrowd', 'orig_size', 'size'
         return image, target
 
 

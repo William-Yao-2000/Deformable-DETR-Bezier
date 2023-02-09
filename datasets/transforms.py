@@ -25,21 +25,21 @@ def crop(image, target, region):
     cropped_image = F.crop(image, *region)
 
     target = target.copy()
-    i, j, h, w = region
+    i, j, h, w = region  # (top, left, height, width)
 
     # should we do something wrt the original size?
-    target["size"] = torch.tensor([h, w])
+    target["size"] = torch.tensor([h, w])  # 将ground truth的size修改为裁剪后的
 
     fields = ["labels", "area", "iscrowd"]
 
     if "boxes" in target:
         boxes = target["boxes"]
         max_size = torch.as_tensor([w, h], dtype=torch.float32)
-        cropped_boxes = boxes - torch.as_tensor([j, i, j, i])
-        cropped_boxes = torch.min(cropped_boxes.reshape(-1, 2, 2), max_size)
-        cropped_boxes = cropped_boxes.clamp(min=0)
-        area = (cropped_boxes[:, 1, :] - cropped_boxes[:, 0, :]).prod(dim=1)
-        target["boxes"] = cropped_boxes.reshape(-1, 4)
+        cropped_boxes = boxes - torch.as_tensor([j, i, j, i])  # ground truth box 坐标平移
+        cropped_boxes = torch.min(cropped_boxes.reshape(-1, 2, 2), max_size)  # 裁掉平移后box大于图片高宽的部分
+        cropped_boxes = cropped_boxes.clamp(min=0)  # 裁掉平移后小于0的部分
+        area = (cropped_boxes[:, 1, :] - cropped_boxes[:, 0, :]).prod(dim=1)  # 用裁剪后的box重新计算面积
+        target["boxes"] = cropped_boxes.reshape(-1, 4)  # 更新
         target["area"] = area
         fields.append("boxes")
 
@@ -54,6 +54,7 @@ def crop(image, target, region):
         # this is compatible with previous implementation
         if "boxes" in target:
             cropped_boxes = target['boxes'].reshape(-1, 2, 2)
+            # 去除面积为 0 的 box
             keep = torch.all(cropped_boxes[:, 1, :] > cropped_boxes[:, 0, :], dim=1)
         else:
             keep = target['masks'].flatten(1).any(1)
@@ -172,7 +173,7 @@ class RandomSizeCrop(object):
     def __call__(self, img: PIL.Image.Image, target: dict):
         w = random.randint(self.min_size, min(img.width, self.max_size))
         h = random.randint(self.min_size, min(img.height, self.max_size))
-        region = T.RandomCrop.get_params(img, [h, w])
+        region = T.RandomCrop.get_params(img, [h, w])  # (top, left, height, width)
         return crop(img, target, region)
 
 
@@ -250,6 +251,9 @@ class RandomErasing(object):
 
 
 class Normalize(object):
+    """
+    为图片和target做归一化
+    """
     def __init__(self, mean, std):
         self.mean = mean
         self.std = std

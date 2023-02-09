@@ -35,7 +35,7 @@ class CocoDetection(VisionDataset):
         super(CocoDetection, self).__init__(root, transforms, transform, target_transform)
         from pycocotools.coco import COCO
         self.coco = COCO(annFile)
-        self.ids = list(sorted(self.coco.imgs.keys()))  # 将所有图片的 id 构成的列表进行排序
+        self.ids = list(sorted(self.coco.imgs.keys()))  # 将 annotation file 中所有图片的 id 构成的列表进行排序
         self.cache_mode = cache_mode
         self.local_rank = local_rank
         self.local_size = local_size
@@ -78,7 +78,7 @@ class CocoDetection(VisionDataset):
         if self.transforms is not None:
             img, target = self.transforms(img, target)
 
-        return img, target  # 图片以及 annotation object
+        return img, target  # 图片以及图片中 ann object 的字典构成的列表
 
-    def __len__(self):
+    def __len__(self):  # annotation file 中图片总数量
         return len(self.ids)
