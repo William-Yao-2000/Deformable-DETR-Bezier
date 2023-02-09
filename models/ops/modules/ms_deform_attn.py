@@ -92,6 +92,7 @@ class MSDeformAttn(nn.Module):
         assert (input_spatial_shapes[:, 0] * input_spatial_shapes[:, 1]).sum() == Len_in
 
         value = self.value_proj(input_flatten)  # 论文里面的 W^'_m
+        # mask 值为 1 的地方填充 0
         if input_padding_mask is not None:
             value = value.masked_fill(input_padding_mask[..., None], float(0))  # 最后一维扩维：因为 mask 只有 2 维，没有 channel
         value = value.view(N, Len_in, self.n_heads, self.d_model // self.n_heads)  # TODO: 难道不同维度交给不同的 head 处理？

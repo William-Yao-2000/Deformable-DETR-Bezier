@@ -79,11 +79,12 @@ class HungarianMatcher(nn.Module):
             gamma = 2.0
             neg_cost_class = (1 - alpha) * (out_prob ** gamma) * (-(1 - out_prob + 1e-8).log())
             pos_cost_class = alpha * ((1 - out_prob) ** gamma) * (-(out_prob + 1e-8).log())
+            # cost_class[i, j]: out_prob 中第 i 个 query 在 tgt 中第 j 个目标对应的类上的二分类 focal loss
             # 感觉是将概率看作 num_classes 个二分类器啊
             cost_class = pos_cost_class[:, tgt_ids] - neg_cost_class[:, tgt_ids]  # [bs * num_queries, \sum_{i=0}^{bs-1} num_target_boxes_i]
 
             # Compute the L1 cost between boxes
-            # out_bbox 中第 i 个元素到 tgt_bbox 中第 j 个元素的 L1 距离
+            # cost_bbox[i, j]: out_bbox 中第 i 个元素到 tgt_bbox 中第 j 个元素的 L1 距离
             cost_bbox = torch.cdist(out_bbox, tgt_bbox, p=1)  # [bs * num_queries, \sum_{i=0}^{bs-1} num_target_boxes_i]
 
             # Compute the giou cost betwen boxes
@@ -92,14 +93,17 @@ class HungarianMatcher(nn.Module):
 
             # Final cost matrix
             C = self.cost_bbox * cost_bbox + self.cost_class * cost_class + self.cost_giou * cost_giou
-            C = C.view(bs, num_queries, -1).cpu()
+            C = C.view(bs, num_queries, -1).cpu()  # [bs, num_queries, \sum_{i=0}^{bs-1} num_target_boxes_i]
 
             sizes = [len(v["boxes"]) for v in targets]
             # 行和列进行匹配，使得匹配的二者对应元素最小
             indices = [linear_sum_assignment(c[i]) for i, c in enumerate(C.split(sizes, -1))]
-            # c[i]: [bs, num_queries, num_target_boxes_i]
-            # indices: [num_target_boxes_i, 2] 形状的元组组成的列表
+            # c: [bs, num_queries, num_target_boxes_i]
+            # c[i]: [num_queries, num_target_boxes_i]
+            # 因为要将第 i 个预测的 batch 与第 i 个 target 的 batch 对应起来
             return [(torch.as_tensor(i, dtype=torch.int64), torch.as_tensor(j, dtype=torch.int64)) for i, j in indices]
+            # result[k]: 第 k 个 batch 中预测结果与真实目标的对应关系，形状为 [num_target_boxes_k, 2]
+            # e.g. result[1] == (tensor[0, 1, 3], tensor[2, 0, 1])
 
 
 def build_matcher(args):

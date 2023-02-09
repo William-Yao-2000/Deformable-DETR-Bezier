@@ -236,7 +236,7 @@ class SetCriterion(nn.Module):
     def __init__(self, num_classes, matcher, weight_dict, losses, focal_alpha=0.25):
         """ Create the criterion.
         Parameters:
-            num_classes: number of object categories, omitting the special no-object category
+            num_classes: number of object categories, **omitting** the special no-object category
             matcher: module able to compute a matching between targets and proposals
             weight_dict: dict containing as key the names of the losses and as values their relative weight.
             losses: list of all the losses to be applied. See get_loss for list of available losses.
@@ -258,16 +258,21 @@ class SetCriterion(nn.Module):
 
         idx = self._get_src_permutation_idx(indices)
         target_classes_o = torch.cat([t["labels"][J] for t, (_, J) in zip(targets, indices)])
+        # [\sum_{i=0}^{bs-1} num_target_boxes_i,]
         target_classes = torch.full(src_logits.shape[:2], self.num_classes,
                                     dtype=torch.int64, device=src_logits.device)
+        # [bs, num_queries]
+        # num_classes 这个数值应该是对应的空类？
         target_classes[idx] = target_classes_o
 
         target_classes_onehot = torch.zeros([src_logits.shape[0], src_logits.shape[1], src_logits.shape[2] + 1],
                                             dtype=src_logits.dtype, layout=src_logits.layout, device=src_logits.device)
+        # [bs, num_queries, num_classes+1]
         target_classes_onehot.scatter_(2, target_classes.unsqueeze(-1), 1)
-        # TODO: 真的晕了
+        # scatter_ 的有关参考：https://yuyangyy.medium.com/understand-torch-scatter-b0fd6275331c
 
-        target_classes_onehot = target_classes_onehot[:,:,:-1]  # 背景类为全0
+        target_classes_onehot = target_classes_onehot[:,:,:-1]  # 背景类为全0  [bs, num_queries, num_classes]
+        # 每个batch中每个query预测的结果对应的真实目标类别（以独热编码表示）
         loss_ce = sigmoid_focal_loss(src_logits, target_classes_onehot, num_boxes, alpha=self.focal_alpha, gamma=2) * src_logits.shape[1]
         losses = {'loss_ce': loss_ce}
 
@@ -344,12 +349,14 @@ class SetCriterion(nn.Module):
 
     def _get_src_permutation_idx(self, indices):
         # permute predictions following indices
+        # 将所有的 src 的索引连接在一起，并加上了对应 batch 的下标
         batch_idx = torch.cat([torch.full_like(src, i) for i, (src, _) in enumerate(indices)])  # [0,1,1,2,2,3,...]
         src_idx = torch.cat([src for (src, _) in indices])  # 将列表中分割的元组连接在一起
         return batch_idx, src_idx
 
     def _get_tgt_permutation_idx(self, indices):
         # permute targets following indices
+        # 将所有的 tgt 的索引连接在一起，并加上了对应 batch 的下标
         batch_idx = torch.cat([torch.full_like(tgt, i) for i, (_, tgt) in enumerate(indices)])
         tgt_idx = torch.cat([tgt for (_, tgt) in indices])
         return batch_idx, tgt_idx
@@ -372,6 +379,8 @@ class SetCriterion(nn.Module):
                       The expected keys in each dict depends on the losses applied, see each loss' doc
         """
         outputs_without_aux = {k: v for k, v in outputs.items() if k != 'aux_outputs' and k != 'enc_outputs'}
+        # 'pred_logits': [bs, num_queries, num_classes]
+        # 'pred_boxes': [bs, num_queries, 4]
 
         # Retrieve the matching between the outputs of the last layer and the targets
         indices = self.matcher(outputs_without_aux, targets)
@@ -386,6 +395,7 @@ class SetCriterion(nn.Module):
         # Compute all the requested losses
         losses = {}
         for loss in self.losses:
+            # 最基本的3个：labels, boxes, cardinality
             kwargs = {}
             losses.update(self.get_loss(loss, outputs, targets, indices, num_boxes, **kwargs))
 
@@ -496,7 +506,7 @@ def build(args):
     model = DeformableDETR(
         backbone,
         transformer,
-        num_classes=num_classes,  # coco: 90+1
+        num_classes=num_classes,  # coco: 91
         num_queries=args.num_queries,  # default=300
         num_feature_levels=args.num_feature_levels,  # 4
         aux_loss=args.aux_loss,  # False
@@ -506,7 +516,7 @@ def build(args):
     if args.masks:
         model = DETRsegm(model, freeze_detr=(args.frozen_weights is not None))
 
-    # 定义损失函数
+    # 定义匹配器及损失函数
     matcher = build_matcher(args)  # 匈牙利二分图匹配
     weight_dict = {'loss_ce': args.cls_loss_coef, 'loss_bbox': args.bbox_loss_coef}
     weight_dict['loss_giou'] = args.giou_loss_coef

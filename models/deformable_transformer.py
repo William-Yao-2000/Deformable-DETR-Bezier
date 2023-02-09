@@ -230,6 +230,16 @@ class DeformableTransformerEncoderLayer(nn.Module):
         return src
 
     def forward(self, src, pos, reference_points, spatial_shapes, level_start_index, padding_mask=None):
+        """forward function of deformable transformer ENCODER LAYER
+
+        Args:
+            src:                [bs, \sum_{l=0}^{L-1} h_l * w_l, d_model]
+            pos:                [bs, \sum_{l=0}^{L-1} h_l * w_l, d_model]
+            reference_points:   [bs, \sum_{l=0}^{L-1} h_l * w_l, L, 2]
+            spatial_shapes:     [L, 2]
+            level_start_index:  [L,]
+            padding_mask:       [bs, \sum_{l=0}^{L-1} h_l * w_l]
+        """
         # self attention
         src2 = self.self_attn(self.with_pos_embed(src, pos), reference_points, src, spatial_shapes, level_start_index, padding_mask)
         src = src + self.dropout1(src2)
@@ -271,7 +281,7 @@ class DeformableTransformerEncoder(nn.Module):
             # 感觉是用每张图片 padding 前的大小来对 meshgrid 做归一化？
             ref_y = ref_y.reshape(-1)[None] / (valid_ratios[:, None, lvl, 1] * H_)  # [bs, h_l * w_l]
             ref_x = ref_x.reshape(-1)[None] / (valid_ratios[:, None, lvl, 0] * W_)
-            ref = torch.stack((ref_x, ref_y), -1)  # [bs, h_l * w_l, 2]    每个batch中每张图片按照原有大小归一化后的网格坐标
+            ref = torch.stack((ref_x, ref_y), -1)  # [bs, h_l * w_l, 2]    每个batch中每张图片在该层按照原有大小归一化后的网格坐标
             reference_points_list.append(ref)
         reference_points = torch.cat(reference_points_list, 1)  # [bs, \sum_{l=0}^{L-1} h_l * w_l, 2]
         # reference_points[:, :, None]: [bs, \sum_{l=0}^{L-1} h_l * w_l, 1, 2]
@@ -333,6 +343,20 @@ class DeformableTransformerDecoderLayer(nn.Module):
         return tgt
 
     def forward(self, tgt, query_pos, reference_points, src, src_spatial_shapes, level_start_index, src_padding_mask=None):
+        """forward function of deformable transformer DECODER LAYER
+
+        Args:
+            tgt:                    [bs, num_queries, d_model]
+            query_pos:              [bs, num_queries, d_model]
+            reference_points:       [bs, num_queries, L, 2]
+            src:                    [bs, \sum_{l=0}^{L-1} h_l * w_l, d_model]
+            src_spatial_shapes:     [L, 2]
+            level_start_index:      [L,]
+            src_padding_mask:       [bs, \sum_{l=0}^{L-1} h_l * w_l]
+
+        Returns:
+            _type_: _description_
+        """
         # self attention
         q = k = self.with_pos_embed(tgt, query_pos)
         tgt2 = self.self_attn(q.transpose(0, 1), k.transpose(0, 1), tgt.transpose(0, 1))[0].transpose(0, 1)  # TODO: ???
@@ -364,15 +388,17 @@ class DeformableTransformerDecoder(nn.Module):
 
     def forward(self, tgt, reference_points, src, src_spatial_shapes, src_level_start_index, src_valid_ratios,
                 query_pos=None, src_padding_mask=None):
-        """The forward function of transformer decoder.
+        """The forward function of deformable transformer DECODER
 
         Args:
-            tgt: the output of network, [bs, num_queries, d_model]
-            reference_points: the reference point of each query, [bs, num_queries, 2]
-            src: the output of encoder
-            src_valid_ratios: mini-batch 中每张图片在每层的宽和高上的的有效比例，[bs, L, 2]
-            query_pos: query_embed, 感觉是学习出来的 query 的 positional embedding
-            src_padding_mask: the padding mask of encoder input
+            tgt: the input queries of decoder                       [bs, num_queries, d_model]
+            reference_points: the reference point of each query     [bs, num_queries, 2]
+            src: the output features of encoder                     [bs, \sum_{l=0}^{L-1} h_l * w_l, d_model]
+            src_spatial_shapes:                                     [L, 2]
+            src_level_start_index:                                  [L,]
+            src_valid_ratios:                                       [bs, L, 2]
+            query_pos: (learned) query positional embedding         [bs, num_queries, d_model]
+            src_padding_mask: the padding mask of encoder input     [bs, \sum_{l=0}^{L-1} h_l * w_l]
 
         Returns:
             output and reference points
@@ -383,7 +409,6 @@ class DeformableTransformerDecoder(nn.Module):
         intermediate_reference_points = []
         for lid, layer in enumerate(self.layers):
             if reference_points.shape[-1] == 4:
-                
                 reference_points_input = reference_points[:, :, None] \
                                          * torch.cat([src_valid_ratios, src_valid_ratios], -1)[:, None]
             else:
