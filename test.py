@@ -1,6 +1,7 @@
 import torch
 from scipy.optimize import linear_sum_assignment
 import math
+import torch.nn.functional as F
 
 # a = torch.tensor([[2, 2], [3, 5], [9, 10]])
 # print(a.shape)
@@ -120,14 +121,17 @@ import math
 #                   [0.3, 0.4, 0.22, 0.08],
 #                   [0.6, 0.1, 0.23, 0.07],
 #                   [0.67, 0.03, 0.2, 0.1],
-#                   [0.45, 0.25, 0.21, 0.09]])  # [bs * num_queries, \sum_{i=0}^{bs-1} num_target_boxes_i]  1+2+1
+#                   [0.45, 0.25, 0.21, 0.09]])  # [bs * num_queries, \sum_{i=0}^{bs-1} num_target_boxes_i]  1+3
 # sizes = [1, 3]
 # C = C.view(2, 3, -1).cpu()
 # # print(C[(0,1,1,1),(1,0,1,2)])
-# topk_values, topk_indexes = torch.topk(C.view(C.shape[0], -1), 5, dim=1)
-# print(topk_values)
-# print(topk_indexes)
+# # topk_values, topk_indexes = torch.topk(C.view(C.shape[0], -1), 5, dim=1)
+# # print(topk_values)
+# # print(topk_indexes)
 
+# print(C.split(sizes, -1)[0].shape)
+# index = linear_sum_assignment(C.split(sizes, -1)[0][0])
+# print(index)
 # indices = [linear_sum_assignment(c[i]) for i, c in enumerate(C.split(sizes, -1))]
 # print(indices)
 # indices = [(torch.as_tensor(i, dtype=torch.int64), torch.as_tensor(j, dtype=torch.int64)) for i, j in indices]
@@ -146,9 +150,19 @@ import math
 # print(dir_num, file_name)
 
 
-spatial_shapes = torch.tensor([[224, 224], [112, 112], [56, 56], [28, 28]])
-print(spatial_shapes.shape)
-print(spatial_shapes.new_zeros((1, )))
-print(spatial_shapes.prod(1))
-level_start_index = torch.cat((spatial_shapes.new_zeros((1, )), spatial_shapes.prod(1).cumsum(0)[:-1]))
-print(level_start_index)
+# spatial_shapes = torch.tensor([[224, 224], [112, 112], [56, 56], [28, 28]])
+# print(spatial_shapes.shape)
+# print(spatial_shapes.new_zeros((1, )))
+# print(spatial_shapes.prod(1))
+# level_start_index = torch.cat((spatial_shapes.new_zeros((1, )), spatial_shapes.prod(1).cumsum(0)[:-1]))
+# print(level_start_index)
+
+
+bs, num_queries, num_classes = 2, 10, 30
+src = torch.randn(bs, num_queries, num_classes)
+tgt = torch.randint(low=0, high=30, size=(bs, num_queries))
+tgt = torch.LongTensor(tgt)
+tgt_onehot = F.one_hot(tgt, num_classes=num_classes).float()
+print(tgt_onehot)
+ce_loss = F.binary_cross_entropy_with_logits(src, tgt_onehot, reduction="none")
+print(ce_loss.shape)
