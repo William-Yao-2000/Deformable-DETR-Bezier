@@ -174,8 +174,52 @@ import torch.nn.functional as F
 # print(img)
 
 
-box_num_sum = 18
-src_boxes = torch.rand(box_num_sum, 4)
-tgt_boxes = torch.rand(box_num_sum, 4)
-loss_bbox = F.l1_loss(src_boxes, tgt_boxes, reduction='none')
-print(loss_bbox.shape)
+# box_num_sum = 18
+# src_boxes = torch.rand(box_num_sum, 4)
+# tgt_boxes = torch.rand(box_num_sum, 4)
+# loss_bbox = F.l1_loss(src_boxes, tgt_boxes, reduction='none')
+# print(loss_bbox.shape)
+
+
+# lst = [3, 2]
+# print(lst*4)
+
+
+# cropped_boxes = torch.randn(3, 2, 2)
+# print(cropped_boxes)
+# keep_char = torch.all(cropped_boxes[:, 1, :] > cropped_boxes[:, 0, :], dim=1)
+# print(keep_char.shape)
+# print(keep_char)
+
+# cropped_points = torch.randn(4, 8)
+# # keep_points = torch.all(0 <= cropped_points[:, 0::7] <= 0.5 and 0 <= cropped_points[:, 1::7] <= 0.5, dim=1)
+# print(cropped_points)
+# xs, ys = cropped_points[:, 0::2], cropped_points[:, 1::2]
+# print(xs)
+# # print(y1_y4)
+# keep_x = torch.logical_and(torch.all(xs >= -1, dim=1), torch.all(xs <= 1, dim=1))
+# print(keep_x)
+
+
+# dct = {}
+# dct['image_id'] = 1
+# dct['char'] = {"area": 123}
+# print(dct)
+# dct_char = dct['char']
+# dct_char['area'] = 456
+# print(dct)
+
+
+# points = torch.randn(5, 8)
+# print(points)
+# points = points * torch.as_tensor([-1, 1]*4)
+# print(points)
+
+
+# import random
+# sizes = [400, 600, 800, 1000]
+# print(random.choice(sizes))
+
+w, h = 800, 600
+x = torch.tensor([w, h]*4, dtype=torch.float32)
+print(x)
