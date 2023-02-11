@@ -31,13 +31,15 @@ class CocoDetection(TvCocoDetection):  # 坑人！注意 21 行，这个继承�
         self.prepare = ConvertCocoPolysToMask(return_masks)
 
     def __getitem__(self, idx):
-        img, target = super(CocoDetection, self).__getitem__(idx)
+        img, target_char, target_bezier = super(CocoDetection, self).__getitem__(idx)
         image_id = self.ids[idx]
-        target = {'image_id': image_id, 'annotations': target}
-        # target['annotations']: 列表，列表中的元素是 ann object dict
+        target = {'image_id': image_id, 'annos_char': target_char, 'annos_bezier': target_bezier}
+        # target['annos_char']: 列表，列表中的元素是 ann object dict
+        # target['annos_bezier'] 同理 
         img, target = self.prepare(img, target)  # 输入：图片和字典    输出：图片和处理过的字典
-        # target
-        #   key: 'image_id', 'boxes', 'labels', 'area', 'iscrowd', 'orig_size', 'size'
+        # img: PIL.Image.Image
+        # target: dict
+        #   key: 'image_id', 'orig_size', 'size', 'char', 'bezier'
         if self._transforms is not None:
             img, target = self._transforms(img, target)  # 因为这个转换函数是经过复写的，所以可以输入 img 和 target
         return img, target
@@ -65,67 +67,98 @@ class ConvertCocoPolysToMask(object):
         self.return_masks = return_masks
 
     def __call__(self, image, target):
+        """
+        Args:
+            image (PIL.Image.Image): Image object
+            target (dict):
+                key: 'imgag_id', 'annos_char', 'annos_bezier'
+
+        Returns:
+            Tuple (image, target)
+        """
         w, h = image.size  # 坑人..
 
         image_id = target["image_id"]
         image_id = torch.tensor([image_id])
 
-        anno = target["annotations"]  # list(ann obj dict)
+        # -- handle the character annotations --
+        char_dict = {}
 
-        anno = [obj for obj in anno if 'iscrowd' not in obj or obj['iscrowd'] == 0]
+        anno_char = target["annos_char"]  # list(ann obj dict)
+        anno_char = [obj for obj in anno_char if 'iscrowd' not in obj or obj['iscrowd'] == 0]
         # 只选择没有键 iscrowd 或者键 iscrowd 对应的值为 0 的字典项
 
-        boxes = [obj["bbox"] for obj in anno]  # 每一项都是 4 个坐标, (x1, y1, w, h)
+        boxes = [obj["bbox"] for obj in anno_char]  # 每一项都是 4 个坐标, (x1, y1, w, h)
         # guard against no boxes via resizing
         boxes = torch.as_tensor(boxes, dtype=torch.float32).reshape(-1, 4)
         boxes[:, 2:] += boxes[:, :2]  # 将宽和高转换为右下角坐标
-        boxes[:, 0::2].clamp_(min=0, max=w)
+        boxes[:, 0::2].clamp_(min=0, max=w)  # 截取
         boxes[:, 1::2].clamp_(min=0, max=h)
-        # [num_boxes, 4]
+        # [num_boxes, 4],   (x1, y1, x2, y2)
 
-        classes = [obj["category_id"] for obj in anno]
-        classes = torch.tensor(classes, dtype=torch.int64)  # [num_boxes,]
+        classes_char = [obj["category_id"] for obj in anno_char]
+        classes_char = torch.tensor(classes_char, dtype=torch.int64)  # [num_boxes,]
 
         if self.return_masks:
-            segmentations = [obj["segmentation"] for obj in anno]
+            segmentations = [obj["segmentation"] for obj in anno_char]
             masks = convert_coco_poly_to_mask(segmentations, h, w)
 
         keypoints = None
-        if anno and "keypoints" in anno[0]:
-            keypoints = [obj["keypoints"] for obj in anno]
+        if anno_char and "keypoints" in anno_char[0]:
+            keypoints = [obj["keypoints"] for obj in anno_char]
             keypoints = torch.as_tensor(keypoints, dtype=torch.float32)
             num_keypoints = keypoints.shape[0]
             if num_keypoints:
                 keypoints = keypoints.view(num_keypoints, -1, 3)
 
-        # 去除无效的 box
+        area = torch.tensor([obj["area"] for obj in anno_char])  # [num_boxes_,]
+        iscrowd = torch.tensor([obj["iscrowd"] if "iscrowd" in obj else 0 for obj in anno_char])  # [num_boxes_,]
+
+        # 去除无效的 box 对应的 annotation 项
         keep = (boxes[:, 3] > boxes[:, 1]) & (boxes[:, 2] > boxes[:, 0])
         boxes = boxes[keep]
-        classes = classes[keep]
+        classes_char = classes_char[keep]
         if self.return_masks:
             masks = masks[keep]
         if keypoints is not None:
             keypoints = keypoints[keep]
-
-        target = {}
-        target["boxes"] = boxes  # [num_boxes_, 4]
-        target["labels"] = classes  # [num_boxes_,]
+        area = area[keep]
+        iscrowd = iscrowd[keep]
+        
+        char_dict["boxes"] = boxes  # [num_boxes_, 4]
+        char_dict["labels"] = classes_char  # [num_boxes_,]
         if self.return_masks:
-            target["masks"] = masks
-        target["image_id"] = image_id
+            char_dict["masks"] = masks
         if keypoints is not None:
-            target["keypoints"] = keypoints
-
+            char_dict["keypoints"] = keypoints
         # for conversion to coco api
-        area = torch.tensor([obj["area"] for obj in anno])
-        iscrowd = torch.tensor([obj["iscrowd"] if "iscrowd" in obj else 0 for obj in anno])
-        target["area"] = area[keep]  # segmentation area
-        target["iscrowd"] = iscrowd[keep]
+        char_dict["area"] = area  # segmentation area
+        char_dict["iscrowd"] = iscrowd
 
+        # -- handle the bezier annotations --
+        bezier_dict = {}
+
+        anno_bezier = target["annos_bezier"]  # list (ann bezier dict)
+        
+        points = [obj["point"] for obj in anno_bezier]  # 每一项都是 (x1, y1, x2, y2, x3, y3, x4, y4)
+        points = torch.as_tensor(points, dtype=torch.float32).reshape(-1, 8)  # [num_bezier, 8]
+        
+        classes_bezier = [obj["category_bezier_id"] for obj in anno_bezier]
+        classes_bezier = torch.as_tensor(classes_bezier, dtype=torch.int64)  # [num_bezier,]
+
+        bezier_dict["points"] = points
+        bezier_dict["labels"] = classes_bezier
+        
+        # -- gen target dict --
+        target = {}
+
+        target["image_id"] = image_id
         target["orig_size"] = torch.as_tensor([int(h), int(w)])
         target["size"] = torch.as_tensor([int(h), int(w)])
+        target["char"] = char_dict
+        target["bezier"] = bezier_dict
 
-        # target key: 'image_id', 'boxes', 'labels', 'area', 'iscrowd', 'orig_size', 'size'
+        # target key: 'image_id', 'orig_size', 'size', 'char', 'bezier'
         return image, target
 
 
