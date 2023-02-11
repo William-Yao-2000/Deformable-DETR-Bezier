@@ -6,10 +6,33 @@
 
 import torch
 
+
+def _tgt_to_cuda(target, device):
+    """
+    change the device of the values in a single target dict (the new bezier target format)
+    """
+    target_cuda = {k: v.to(device, non_blocking=True) for k, v in target.items()
+                                                      if k not in ("char", "bezier")}
+    for key in ("char", "bezier"):
+        if key in target:
+            target_cuda[key] = {k: v.to(device, non_blocking=True) for k, v in target[key].items()}
+    return target_cuda
+
 def to_cuda(samples, targets, device):
     samples = samples.to(device, non_blocking=True)
-    targets = [{k: v.to(device, non_blocking=True) for k, v in t.items()} for t in targets]
+    targets = [_tgt_to_cuda(t) for t in targets]
     return samples, targets
+
+
+def _tgt_record_stream(target):
+    for k, v in target.items():
+        if k not in ("char", "bezier"):
+            v.record_stream(torch.cuda.current_stream())
+    for key in ("char", "bezier"):
+        if key in target:
+            for k, v in target[key].items():
+                v.record_stream(torch.cuda.current_stream())
+
 
 class data_prefetcher():
     def __init__(self, loader, device, prefetch=True):
@@ -57,8 +80,7 @@ class data_prefetcher():
                 samples.record_stream(torch.cuda.current_stream())
             if targets is not None:
                 for t in targets:
-                    for k, v in t.items():
-                        v.record_stream(torch.cuda.current_stream())
+                    _tgt_record_stream(t)
             self.preload()
         else:
             try:
