@@ -1,7 +1,7 @@
-import torch
-from scipy.optimize import linear_sum_assignment
-import math
-import torch.nn.functional as F
+# import torch
+# from scipy.optimize import linear_sum_assignment
+# import math
+# import torch.nn.functional as F
 
 # a = torch.tensor([[2, 2], [3, 5], [9, 10]])
 # print(a.shape)
@@ -220,6 +220,20 @@ import torch.nn.functional as F
 # sizes = [400, 600, 800, 1000]
 # print(random.choice(sizes))
 
-w, h = 800, 600
-x = torch.tensor([w, h]*4, dtype=torch.float32)
-print(x)
+# w, h = 800, 600
+# x = torch.tensor([w, h]*4, dtype=torch.float32)
+# print(x)
+
+
+# tgt = {"char": [1], "bezier": [100]}
+
+# def handle(tgt):
+#     for k, v in tgt.items():
+#         v[0] += 1 if v[0] == 1 else 0
+# handle(tgt)
+# print(tgt)
+
+
+num_queries = (330, 100)
+print(num_queries)
+print(sum(num_queries))
