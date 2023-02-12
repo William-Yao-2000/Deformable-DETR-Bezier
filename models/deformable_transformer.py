@@ -41,7 +41,8 @@ class DeformableTransformer(nn.Module):
         decoder_layer = DeformableTransformerDecoderLayer(d_model, dim_feedforward,
                                                           dropout, activation,
                                                           num_feature_levels, nhead, dec_n_points)
-        self.decoder = DeformableTransformerDecoder(decoder_layer, num_decoder_layers, return_intermediate_dec)
+        self.decoder_c = DeformableTransformerDecoder(decoder_layer, num_decoder_layers, return_intermediate_dec)
+        self.decoder_b = DeformableTransformerDecoder(decoder_layer, num_decoder_layers, return_intermediate_dec)
 
         self.level_embed = nn.Parameter(torch.Tensor(num_feature_levels, d_model))  # 层级编码
 
@@ -51,7 +52,8 @@ class DeformableTransformer(nn.Module):
             self.pos_trans = nn.Linear(d_model * 2, d_model * 2)
             self.pos_trans_norm = nn.LayerNorm(d_model * 2)
         else:
-            self.reference_points = nn.Linear(d_model, 2)
+            self.reference_points_c = nn.Linear(d_model, 2)
+            self.reference_points_b = nn.Linear(d_model, 2)
 
         self._reset_parameters()
 
@@ -64,8 +66,10 @@ class DeformableTransformer(nn.Module):
             if isinstance(m, MSDeformAttn):
                 m._reset_parameters()
         if not self.two_stage:
-            xavier_uniform_(self.reference_points.weight.data, gain=1.0)
-            constant_(self.reference_points.bias.data, 0.)
+            xavier_uniform_(self.reference_points_c.weight.data, gain=1.0)
+            constant_(self.reference_points_c.bias.data, 0.)
+            xavier_uniform_(self.reference_points_b.weight.data, gain=1.0)
+            constant_(self.reference_points_b.bias.data, 0.)
         normal_(self.level_embed)
 
     def get_proposal_pos_embed(self, proposals):
@@ -125,6 +129,7 @@ class DeformableTransformer(nn.Module):
         return valid_ratio
 
     def forward(self, srcs, masks, pos_embeds, query_embed=None):
+        # now the query_embed is a dict
         assert self.two_stage or query_embed is not None
 
         # prepare input for encoder
@@ -181,19 +186,35 @@ class DeformableTransformer(nn.Module):
             pos_trans_out = self.pos_trans_norm(self.pos_trans(self.get_proposal_pos_embed(topk_coords_unact)))
             query_embed, tgt = torch.split(pos_trans_out, c, dim=2)
         else:
-            # （切分前） query_embed: [num_queries, d_model*2]
-            query_embed, tgt = torch.split(query_embed, c, dim=1)  # 切分？之前把 query embedding 到了 d_model*2 维，所以可以沿列切分为 2 块
-            # （切分后） query_embed: [num_queries, d_model]
-            query_embed = query_embed.unsqueeze(0).expand(bs, -1, -1)   # [bs, num_queries, d_model]
-            tgt = tgt.unsqueeze(0).expand(bs, -1, -1)                   # -1: 当前维度的尺寸不变
-            reference_points = self.reference_points(query_embed).sigmoid()  # 直接用一个线性层学习出参考点，[bs, num_queries, 2]
-            init_reference_out = reference_points
+            # 切分前：
+            # query_embed["c"]: [num_queries_c, d_model*2]
+            # query_embed["b"]: [num_queries_b, d_model*2]
+            # 切分？之前把 query embedding 到了 d_model*2 维，所以可以沿列切分为 2 块
+            query_embed_c, tgt_c = torch.split(query_embed["c"], c, dim=1)  # c == d_model
+            query_embed_b, tgt_b = torch.split(query_embed["b"], c, dim=1)
+            # 切分后：
+            # query_embed_c: [num_queries_c, d_model]
+            # query_embed_b: [num_queries_b, d_model]
+            query_embed_c = query_embed_c.unsqueeze(0).expand(bs, -1, -1)   # [bs, num_queries_c, d_model]
+            tgt_c = tgt_c.unsqueeze(0).expand(bs, -1, -1)  # -1: 对应维度的尺寸不变
+            query_embed_b = query_embed_b.unsqueeze(0).expand(bs, -1, -1)   # [bs, num_queries_b, d_model]
+            tgt_b = tgt_b.unsqueeze(0).expand(bs, -1, -1)
+            reference_points_c = self.reference_points_c(query_embed["c"]).sigmoid()  # 直接用一个线性层学习出参考点，[bs, num_queries_c, 2]
+            reference_points_b = self.reference_points_b(query_embed["b"]).sigmoid()
+            init_reference_out_c, init_reference_out_b = reference_points_c, reference_points_b
 
-        # decoder
-        hs, inter_references = self.decoder(tgt, reference_points, memory,
-                                            spatial_shapes, level_start_index, valid_ratios, query_embed, mask_flatten)
+        # dual decoders
+        hs_c, inter_references_c = self.decoder_c(tgt_c, reference_points_c, memory, spatial_shapes, 
+                                                  level_start_index, valid_ratios, query_embed_c, mask_flatten)
+        hs_b, inter_references_b = self.decoder_b(tgt_b, reference_points_b, memory, spatial_shapes, 
+                                                  level_start_index, valid_ratios, query_embed_b, mask_flatten)
 
-        inter_references_out = inter_references
+        inter_references_out_c, inter_references_out_b = inter_references_c, inter_references_b
+        
+        hs = {"c": hs_c, "b": hs_b}
+        init_reference_out = {"c": init_reference_out_c, "b": init_reference_out_b}
+        inter_references_out = {"c": inter_references_out_c, "b": inter_references_out_b}
+
         if self.two_stage:
             return hs, init_reference_out, inter_references_out, enc_outputs_class, enc_outputs_coord_unact
         return hs, init_reference_out, inter_references_out, None, None
