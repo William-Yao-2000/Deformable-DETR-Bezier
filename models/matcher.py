@@ -37,7 +37,7 @@ class HungarianMatcherChar(nn.Module):
             cost_bbox: This is the relative weight of the L1 error of the bounding box coordinates in the matching cost
             cost_giou: This is the relative weight of the giou loss of the bounding box in the matching cost
         """
-        super().__init__()
+        super(HungarianMatcherChar, self).__init__()
         self.cost_class_c = cost_class_c
         self.cost_bbox = cost_bbox
         self.cost_giou = cost_giou
@@ -133,7 +133,7 @@ class HungarianMatcherBezier(nn.Module):
             cost_class_b: This is the relative weight of the bezier curve classification error in the matching cost
             cost_point: This is the relative weight of the **L2** error of the control point coordinates in the matching cost
         """
-        super().__init__()
+        super(HungarianMatcherBezier, self).__init__()
         self.cost_class_b = cost_class_b
         self.cost_point = cost_point
         assert cost_class_b != 0 or cost_point != 0, "all costs cant be 0"

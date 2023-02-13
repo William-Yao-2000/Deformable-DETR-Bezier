@@ -39,6 +39,8 @@ class SetCriterion(nn.Module):
             weight_dict: a dict containing key 'c' and 'b'
             losses: a dict containing key 'c' and 'b'
         """
+        super(SetCriterion, self).__init__()
+        self.weight_dict = weight_dict
         self.criterion_c = SetCriterionPart(num_classes[0], matcher['c'], weight_dict['c'], 
                                             losses['c'], mode='c', focal_alpha=focal_alpha)
         self.criterion_b = SetCriterionPart(num_classes[1], matcher['b'], weight_dict['b'], 
@@ -67,7 +69,7 @@ class SetCriterionPart(nn.Module):
             losses_x: list of all the losses to be applied. See get_loss for list of available losses.
             focal_alpha: alpha in Focal Loss
         """
-        super().__init__()
+        super(SetCriterionPart, self).__init__()
         self.num_classes_x = num_classes_x
         self.matcher_x = matcher_x
         self.weight_dict_x = weight_dict_x
@@ -94,7 +96,7 @@ class SetCriterionPart(nn.Module):
             target_classes_o = torch.cat([t["bezier"]["labels"][J] for t, (_, J) in zip(targets, indices_x)])
             # # [\sum_{i=0}^{bs-1} num_target_bezier_i,]
 
-        target_classes = torch.full(src_logits.shape[:2], self.num_classes,
+        target_classes = torch.full(src_logits.shape[:2], self.num_classes_x,
                                     dtype=torch.int64, device=src_logits.device)
         # [bs, num_queries_c] or [bs, num_queries_b]
         # num_classes_c 这个数值应该是对应的空类？

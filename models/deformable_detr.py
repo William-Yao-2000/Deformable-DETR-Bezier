@@ -49,7 +49,7 @@ class DeformableDETR(nn.Module):
             with_box_refine: iterative bounding box refinement
             two_stage: two-stage Deformable DETR
         """
-        super().__init__()
+        super(DeformableDETR, self).__init__()
         self.num_queries_c = num_queries[0]  # num_queries_characters
         self.num_queries_b = num_queries[1]  # num_qureies_bezier_curves
         self.transformer = transformer
@@ -147,6 +147,7 @@ class DeformableDETR(nn.Module):
                - samples.tensor: batched images, of shape [batch_size x 3 x H x W]
                - samples.mask: a binary mask of shape [batch_size x H x W], containing 1 on padded pixels
 
+            # TODO: 要修改
             It returns a dict with the following elements:
                - "pred_logits": the classification logits (including no-object) for all queries.
                                 Shape= [batch_size x num_queries x (num_classes + 1)]
@@ -281,7 +282,7 @@ class PostProcess(nn.Module):
                           For evaluation, this must be the original image size (before any data augmentation)
                           For visualization, this should be the image size after data augment, but before padding
         """
-        out_logits, out_bbox = outputs['pred_logits'], outputs['pred_boxes']
+        out_logits, out_bbox = outputs['char']['pred_logits'], outputs['char']['pred_boxes']
         # [bs, num_queries, num_classes], [bs, num_queries, 4]
 
         assert len(out_logits) == len(target_sizes)
@@ -329,8 +330,8 @@ def build(args):
         num_classes = 91
     elif args.dataset_file == 'coco_panoptic':
         num_classes = 250
-    elif args.dataset_file == 'synthtext':  # 数据集中类的数目，synthtext recog: 94+1
-        num_classes = (95, 1)
+    elif args.dataset_file == 'synthtext':  # 数据集中类的数目，synthtext recog: 94
+        num_classes = (94, 1)
     device = torch.device(args.device)
 
     # 创建 deformable-DETR 模型
@@ -340,7 +341,7 @@ def build(args):
         backbone,
         transformer,
         num_classes=num_classes,  # coco: 91
-        num_queries=args.num_queries,  # default=300
+        num_queries=args.num_queries,  # default=(330, 100)
         num_feature_levels=args.num_feature_levels,  # 4
         aux_loss=args.aux_loss,  # False
         with_box_refine=args.with_box_refine,  # False
