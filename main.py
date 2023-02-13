@@ -16,6 +16,7 @@ import json
 import random
 import time
 from pathlib import Path
+from typing import Tuple
 
 import numpy as np
 import torch
@@ -78,7 +79,7 @@ def get_args_parser():
                         help="Dropout applied in the transformer")
     parser.add_argument('--nheads', default=8, type=int,
                         help="Number of attention heads inside the transformer's attentions")
-    parser.add_argument('--num_queries', default=330, type=int,
+    parser.add_argument('--num_queries', default=(330, 100), type=Tuple(int, int),
                         help="Number of query slots")  # origin: 300
     parser.add_argument('--dec_n_points', default=4, type=int)
     parser.add_argument('--enc_n_points', default=4, type=int)
@@ -93,20 +94,29 @@ def get_args_parser():
                         help="Disables auxiliary decoding losses (loss at each layer)")
 
     # * Matcher
-    parser.add_argument('--set_cost_class', default=2, type=float,
-                        help="Class coefficient in the matching cost")
+    parser.add_argument('--set_cost_class_c', default=2, type=float,
+                        help="Character class coefficient in the matching cost")
     parser.add_argument('--set_cost_bbox', default=5, type=float,
                         help="L1 box coefficient in the matching cost")
     parser.add_argument('--set_cost_giou', default=2, type=float,
                         help="giou box coefficient in the matching cost")
 
+    parser.add_argument('--set_cost_class_b', default=2, type=float,
+                        help="Bezier curve class coefficient in the matching cost")
+    parser.add_argument('--set_cost_point', default=5, type=float,
+                        help="L2 point coefficient in the matching cost")
+
     # * Loss coefficients
     # 各项损失的权重
     parser.add_argument('--mask_loss_coef', default=1, type=float)
     parser.add_argument('--dice_loss_coef', default=1, type=float)
-    parser.add_argument('--cls_loss_coef', default=2, type=float)
+    parser.add_argument('--cls_c_loss_coef', default=2, type=float)
     parser.add_argument('--bbox_loss_coef', default=5, type=float)
     parser.add_argument('--giou_loss_coef', default=2, type=float)
+
+    parser.add_argument('--cls_b_loss_coef', default=2, type=float)
+    parser.add_argument('--point_loss_coef', default=5, type=float)
+
     parser.add_argument('--focal_alpha', default=0.25, type=float)
 
     # dataset parameters
@@ -209,11 +219,14 @@ def main(args):
             "params": [p for n, p in model_without_ddp.named_parameters() if match_name_keywords(n, args.lr_backbone_names) and p.requires_grad],
             "lr": args.lr_backbone,
         },
+        # TODO: 下面这一块需要测试一下
         {
             "params": [p for n, p in model_without_ddp.named_parameters() if match_name_keywords(n, args.lr_linear_proj_names) and p.requires_grad],
             "lr": args.lr * args.lr_linear_proj_mult,
         }
     ]
+    # test code
+    print(param_dicts)
     # optimizer
     if args.sgd:
         optimizer = torch.optim.SGD(param_dicts, lr=args.lr, momentum=0.9,
