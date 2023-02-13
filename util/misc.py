@@ -91,21 +91,21 @@ class SmoothedValue(object):
         self.total = t[1]
 
     @property
-    def median(self):
+    def median(self):  # 滑动窗口的中位数
         d = torch.tensor(list(self.deque))
         return d.median().item()
 
     @property
-    def avg(self):
+    def avg(self):  # 滑动窗口的均值
         d = torch.tensor(list(self.deque), dtype=torch.float32)
         return d.mean().item()
 
-    @property
+    @property  # smoothvalue 记录过的所有数据的均值
     def global_avg(self):
         return self.total / self.count
 
     @property
-    def max(self):
+    def max(self):  # 滑动窗口的最大值
         return max(self.deque)
 
     @property
@@ -194,6 +194,7 @@ def reduce_dict(input_dict, average=True):
 class MetricLogger(object):
     def __init__(self, delimiter="\t"):
         self.meters = defaultdict(SmoothedValue)  # 每项记录数据都对应一个队列
+        # default: fmt = "{median:.4f} ({global_avg:.4f})"
         self.delimiter = delimiter
 
     def update(self, **kwargs):
