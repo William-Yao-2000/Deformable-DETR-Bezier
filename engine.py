@@ -23,6 +23,53 @@ from datasets.data_prefetcher import data_prefetcher
 
 # all_lst = []
 
+def _reduce_and_update(metric_logger, loss_dict, weight_dict, is_training=True):
+    """
+    reduce the loss dict and update the metric logger in training or evaluation
+
+    loss_dict: {'c': {...}, 'b': {...}}
+    weight_dict: {'c': {...}, 'b': {...}}
+    """
+    # reduce losses over all GPUs for logging purposes
+    # TODO: 为啥要这样做？这是啥意思？
+    # -- the character part --
+    loss_dict_reduced_c = utils.reduce_dict(loss_dict['c'])
+    loss_dict_reduced_unscaled_c = {f'char_{k}_unscaled': v
+                                    for k, v in loss_dict_reduced_c.items()}
+    loss_dict_reduced_scaled_c = {f'char_{k}': v * weight_dict['c'][k]
+                                for k, v in loss_dict_reduced_c.items() if k in weight_dict['c']}
+    losses_reduced_scaled_c = sum(loss_dict_reduced_scaled_c.values())
+    loss_value_c = losses_reduced_scaled_c.item()
+
+    # -- the bezier curve part --
+    loss_dict_reduced_b = utils.reduce_dict(loss_dict['b'])
+    loss_dict_reduced_unscaled_b = {f'bezier_{k}_unscaled': v
+                                    for k, v in loss_dict_reduced_b.items()}
+    loss_dict_reduced_scaled_b = {f'bezier_{k}': v * weight_dict['b'][k]
+                                for k, v in loss_dict_reduced_b.items() if k in weight_dict['b']}
+    losses_reduced_scaled_b = sum(loss_dict_reduced_scaled_b.values())
+    loss_value_b = losses_reduced_scaled_b.item()
+
+    loss_value = loss_value_c + loss_value_b
+
+    # 记录数据
+    metric_logger.update(loss=loss_value)
+    # TODO: 太多的话可以吧 unscaled 的部分去掉
+    metric_logger.update(loss_char=loss_value_c, **loss_dict_reduced_scaled_c, **loss_dict_reduced_unscaled_c)
+    metric_logger.update(loss_bezier=loss_value_b, **loss_dict_reduced_scaled_b, **loss_dict_reduced_unscaled_b)
+    metric_logger.update(class_error_char=loss_dict_reduced_c['class_error'])
+    metric_logger.update(class_error_bezier=loss_dict_reduced_b['class_error'])
+
+    if is_training:
+        if not math.isfinite(loss_value):
+            print("Loss is {}, stopping training".format(loss_value))
+            print("character part:")
+            print(loss_dict_reduced_c)
+            print("bezier curve part:")
+            print(loss_dict_reduced_b)
+            sys.exit(1)
+
+
 def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
                     data_loader: Iterable, optimizer: torch.optim.Optimizer,
                     device: torch.device, epoch: int, max_norm: float = 0):
@@ -45,24 +92,15 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
         # 计算损失
         outputs = model(samples)
         loss_dict = criterion(outputs, targets)
+        # {'c': {...}, 'b': {...}}
         weight_dict = criterion.weight_dict
-        losses = sum(loss_dict[k] * weight_dict[k] for k in loss_dict.keys() if k in weight_dict)
+        # {'c': {...}, 'b': {...}}
+        losses_char = sum(loss_dict['c'][k] * weight_dict['c'][k] for k in loss_dict['c'].keys() if k in weight_dict['c'])
+        losses_bezier = sum(loss_dict['b'][k] * weight_dict['b'][k] for k in loss_dict['b'].keys() if k in weight_dict['b'])
+        losses = losses_char + losses_bezier
+        # better?: losses = losses_char / losses_char.detach() + losses_bezier / losses_bezier.detach()
 
-        # reduce losses over all GPUs for logging purposes
-        # TODO: 为啥要这样做？这是啥意思？
-        loss_dict_reduced = utils.reduce_dict(loss_dict)
-        loss_dict_reduced_unscaled = {f'{k}_unscaled': v
-                                      for k, v in loss_dict_reduced.items()}
-        loss_dict_reduced_scaled = {k: v * weight_dict[k]
-                                    for k, v in loss_dict_reduced.items() if k in weight_dict}
-        losses_reduced_scaled = sum(loss_dict_reduced_scaled.values())
-
-        loss_value = losses_reduced_scaled.item()
-
-        if not math.isfinite(loss_value):
-            print("Loss is {}, stopping training".format(loss_value))
-            print(loss_dict_reduced)
-            sys.exit(1)
+        _reduce_and_update(metric_logger, loss_dict, weight_dict, is_training=True)
 
         # 梯度清零
         optimizer.zero_grad()
@@ -75,13 +113,10 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
         # 反向传播
         optimizer.step()
 
-        # 记录数据
-        metric_logger.update(loss=loss_value, **loss_dict_reduced_scaled, **loss_dict_reduced_unscaled)
-        metric_logger.update(class_error=loss_dict_reduced['class_error'])
         metric_logger.update(lr=optimizer.param_groups[0]["lr"])
         metric_logger.update(grad_norm=grad_total_norm)
 
-        samples, targets = prefetcher.next()
+        samples, targets = prefetcher.next()  # 这里用了 prefetcher 来生成数据
 
         # log_lst = [float(epoch), float(print_cnt * print_freq)]
         # for _, meter in metric_logger.meters.items():
@@ -127,16 +162,7 @@ def evaluate(model, criterion, postprocessors, data_loader, base_ds, device, out
         loss_dict = criterion(outputs, targets)
         weight_dict = criterion.weight_dict
 
-        # reduce losses over all GPUs for logging purposes
-        loss_dict_reduced = utils.reduce_dict(loss_dict)
-        loss_dict_reduced_scaled = {k: v * weight_dict[k]
-                                    for k, v in loss_dict_reduced.items() if k in weight_dict}
-        loss_dict_reduced_unscaled = {f'{k}_unscaled': v
-                                      for k, v in loss_dict_reduced.items()}
-        metric_logger.update(loss=sum(loss_dict_reduced_scaled.values()),
-                             **loss_dict_reduced_scaled,
-                             **loss_dict_reduced_unscaled)
-        metric_logger.update(class_error=loss_dict_reduced['class_error'])
+        _reduce_and_update(metric_logger, loss_dict, weight_dict, is_training=False)
 
         orig_target_sizes = torch.stack([t["orig_size"] for t in targets], dim=0)
         results = postprocessors['bbox'](outputs, orig_target_sizes)
