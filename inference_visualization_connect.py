@@ -294,6 +294,7 @@ def main(args):
     #     return
 
     # load dictionary
+    # TODO: 要改！！！因为一个v可能对应2个k（大小写字母）
     char2num = dict()
     with open("./vis/char2num_dict.json", 'r') as fp:
         char2num = json.load(fp)
