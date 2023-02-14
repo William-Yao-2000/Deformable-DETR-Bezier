@@ -115,13 +115,14 @@ class DeformableDETR(nn.Module):
 
         # 感觉下面这段代码是为了让模型能够输出所有 decoder 中间层的输出结果
         # if two-stage, the **last** class_embed and bbox_embed is for region proposal generation
-        num_pred = (transformer.decoder.num_layers + 1) if two_stage else transformer.decoder.num_layers
+        num_pred_c = (transformer.decoder_c.num_layers + 1) if two_stage else transformer.decoder_c.num_layers
+        num_pred_b = (transformer.decoder_b.num_layers + 1) if two_stage else transformer.decoder_b.num_layers
         # TODO: box refine 和 two-stage 的内容还没看
         if with_box_refine:
             # 深复制
             # TODO: bezier curve 的部分还没加上去
-            self.class_embed = _get_clones(self.class_embed, num_pred)
-            self.bbox_embed = _get_clones(self.bbox_embed, num_pred)
+            self.class_embed = _get_clones(self.class_embed, num_pred_c)
+            self.bbox_embed = _get_clones(self.bbox_embed, num_pred_c)
             nn.init.constant_(self.bbox_embed[0].layers[-1].bias.data[2:], -2.0)
             # hack implementation for iterative bounding box refinement
             self.transformer.decoder.bbox_embed = self.bbox_embed
@@ -129,10 +130,10 @@ class DeformableDETR(nn.Module):
             # 将输出 bounding-box 长和宽的偏移设置为-2.0，反正最后还要再通过 sigmoid 函数
             nn.init.constant_(self.bbox_embed.layers[-1].bias.data[2:], -2.0)
             # 感觉是浅复制，所有 decoder 层共享子网络模型参数
-            self.class_embed_c = nn.ModuleList([self.class_embed_c for _ in range(num_pred)])
-            self.bbox_embed = nn.ModuleList([self.bbox_embed for _ in range(num_pred)])
-            self.class_embed_b = nn.ModuleList([self.class_embed_b for _ in range(num_pred)])
-            self.point_embed = nn.ModuleList([self.point_embed for _ in range(num_pred)])
+            self.class_embed_c = nn.ModuleList([self.class_embed_c for _ in range(num_pred_c)])
+            self.bbox_embed = nn.ModuleList([self.bbox_embed for _ in range(num_pred_c)])
+            self.class_embed_b = nn.ModuleList([self.class_embed_b for _ in range(num_pred_b)])
+            self.point_embed = nn.ModuleList([self.point_embed for _ in range(num_pred_b)])
             # TODO: 尚未知道 self.transformer 的结构如何，因此还需要修改
             self.transformer.decoder_c.bbox_embed = None
         if two_stage:

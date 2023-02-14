@@ -20,7 +20,7 @@ def _tgt_to_cuda(target, device):
 
 def to_cuda(samples, targets, device):
     samples = samples.to(device, non_blocking=True)
-    targets = [_tgt_to_cuda(t) for t in targets]
+    targets = [_tgt_to_cuda(t, device) for t in targets]
     return samples, targets
 
 
