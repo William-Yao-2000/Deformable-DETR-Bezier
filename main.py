@@ -16,7 +16,6 @@ import json
 import random
 import time
 from pathlib import Path
-from typing import Tuple
 
 import numpy as np
 import torch
@@ -79,7 +78,7 @@ def get_args_parser():
                         help="Dropout applied in the transformer")
     parser.add_argument('--nheads', default=8, type=int,
                         help="Number of attention heads inside the transformer's attentions")
-    parser.add_argument('--num_queries', default=(330, 100), type=Tuple(int, int),
+    parser.add_argument('--num_queries', default=(330, 100), type=tuple,
                         help="Number of query slots")  # origin: 300
     parser.add_argument('--dec_n_points', default=4, type=int)
     parser.add_argument('--enc_n_points', default=4, type=int)
