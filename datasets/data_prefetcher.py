@@ -7,20 +7,21 @@
 import torch
 
 
-def _tgt_to_cuda(target, device):
+def _tgt_to_cuda(target, device, non_blocking=True):
     """
     change the device of the values in a single target dict (the new bezier target format)
     """
-    target_cuda = {k: v.to(device, non_blocking=True) for k, v in target.items()
-                                                      if k not in ("char", "bezier")}
+    target_cuda = {k: v.to(device, non_blocking=non_blocking) \
+                   for k, v in target.items() if k not in ("char", "bezier")}
     for key in ("char", "bezier"):
         if key in target:
-            target_cuda[key] = {k: v.to(device, non_blocking=True) for k, v in target[key].items()}
+            target_cuda[key] = {k: v.to(device, non_blocking=non_blocking) \
+                                for k, v in target[key].items()}
     return target_cuda
 
-def to_cuda(samples, targets, device):
-    samples = samples.to(device, non_blocking=True)
-    targets = [_tgt_to_cuda(t, device) for t in targets]
+def to_cuda(samples, targets, device, non_blocking=True):
+    samples = samples.to(device, non_blocking=non_blocking)
+    targets = [_tgt_to_cuda(t, device, non_blocking) for t in targets]
     return samples, targets
 
 
