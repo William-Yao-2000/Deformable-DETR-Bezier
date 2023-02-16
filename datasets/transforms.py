@@ -76,7 +76,7 @@ def crop(image, target, region):
         points = tgt_bezier["points"]  # [num_bezier, 8]
         assert points.shape[-1] == 8
         cropped_points = points - torch.as_tensor([j, i]*4)
-        tgt_bezier["points"] = cropped_boxes
+        tgt_bezier["points"] = cropped_points
         fields_bezier.append("points")
 
         # TODO: it's hard to decide which bezier curve should be kept
@@ -200,7 +200,7 @@ def resize(image, target, size, max_size=None):
 
     # -- handle bezier part --
     tgt_bezier = target["bezier"]
-    if "points" in tgt_char:
+    if "points" in tgt_bezier:
         points = tgt_bezier["points"]
         scaled_points = points * torch.as_tensor([ratio_width, ratio_height] * 4)
         tgt_bezier["points"] = scaled_points
@@ -235,13 +235,11 @@ class RandomCrop(object):
 
 
 class RandomSizeCrop(object):
-    def __init__(self, min_size: int, max_size: int):
-        self.min_size = min_size
-        self.max_size = max_size
-
+    # 修改为随机裁剪，宽和高最小为原图的一半
     def __call__(self, img: PIL.Image.Image, target: dict):
-        w = random.randint(self.min_size, min(img.width, self.max_size))
-        h = random.randint(self.min_size, min(img.height, self.max_size))
+        # 修改：主要是 self.max_size 一般来说太小了
+        w = random.randint(img.width // 2, img.width)
+        h = random.randint(img.height // 2, img.height)
         region = T.RandomCrop.get_params(img, [h, w])  # (top, left, height, width)
         return crop(img, target, region)
 

@@ -199,8 +199,8 @@ class DeformableTransformer(nn.Module):
             tgt_c = tgt_c.unsqueeze(0).expand(bs, -1, -1)  # -1: 对应维度的尺寸不变
             query_embed_b = query_embed_b.unsqueeze(0).expand(bs, -1, -1)   # [bs, num_queries_b, d_model]
             tgt_b = tgt_b.unsqueeze(0).expand(bs, -1, -1)
-            reference_points_c = self.reference_points_c(query_embed["c"]).sigmoid()  # 直接用一个线性层学习出参考点，[bs, num_queries_c, 2]
-            reference_points_b = self.reference_points_b(query_embed["b"]).sigmoid()
+            reference_points_c = self.reference_points_c(query_embed_c).sigmoid()  # 直接用一个线性层学习出参考点，[bs, num_queries_c, 2]
+            reference_points_b = self.reference_points_b(query_embed_b).sigmoid()
             init_reference_out_c, init_reference_out_b = reference_points_c, reference_points_b
 
         # dual decoders

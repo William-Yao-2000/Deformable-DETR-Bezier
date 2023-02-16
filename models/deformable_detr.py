@@ -248,7 +248,7 @@ class DeformableDETR(nn.Module):
                 'pred_logits': outputs_class_c[-1], 'pred_boxes': outputs_coord_c[-1]
             },
             'bezier': {
-                'pred_logits': outputs_class_b[-1], 'pred_points': outputs_coord_c[-1]
+                'pred_logits': outputs_class_b[-1], 'pred_points': outputs_coord_b[-1]
             }
         }
 
@@ -332,7 +332,7 @@ def build(args):
     elif args.dataset_file == 'coco_panoptic':
         num_classes = 250
     elif args.dataset_file == 'synthtext':  # 数据集中类的数目，synthtext recog: 94
-        num_classes = (94, 1)
+        num_classes = (69, 2)
     device = torch.device(args.device)
 
     # 创建 deformable-DETR 模型
@@ -344,7 +344,7 @@ def build(args):
         num_classes=num_classes,  # coco: 91
         num_queries=args.num_queries,  # default=(330, 100)
         num_feature_levels=args.num_feature_levels,  # 4
-        aux_loss=args.aux_loss,  # False
+        aux_loss=args.aux_loss,  # True
         with_box_refine=args.with_box_refine,  # False
         two_stage=args.two_stage,  # False
     )

@@ -19,7 +19,7 @@ import torch
 import util.misc as utils
 from datasets.coco_eval import CocoEvaluator
 from datasets.panoptic_eval import PanopticEvaluator
-from datasets.data_prefetcher import data_prefetcher
+from datasets.data_prefetcher import data_prefetcher, to_cuda
 
 # all_lst = []
 
@@ -55,10 +55,10 @@ def _reduce_and_update(metric_logger, loss_dict, weight_dict, is_training=True):
     # 记录数据
     metric_logger.update(loss=loss_value)
     # TODO: 太多的话可以吧 unscaled 的部分去掉
-    metric_logger.update(loss_char=loss_value_c, **loss_dict_reduced_scaled_c, **loss_dict_reduced_unscaled_c)
-    metric_logger.update(loss_bezier=loss_value_b, **loss_dict_reduced_scaled_b, **loss_dict_reduced_unscaled_b)
-    metric_logger.update(class_error_char=loss_dict_reduced_c['class_error'])
-    metric_logger.update(class_error_bezier=loss_dict_reduced_b['class_error'])
+    metric_logger.update(char_loss=loss_value_c, **loss_dict_reduced_scaled_c, **loss_dict_reduced_unscaled_c)
+    metric_logger.update(bezier_loss=loss_value_b, **loss_dict_reduced_scaled_b, **loss_dict_reduced_unscaled_b)
+    metric_logger.update(char_class_error=loss_dict_reduced_c['class_error'])
+    metric_logger.update(bezier_class_error=loss_dict_reduced_b['class_error'])
 
     if is_training:
         if not math.isfinite(loss_value):
@@ -78,7 +78,8 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
     criterion.train()
     metric_logger = utils.MetricLogger(delimiter="  ")
     metric_logger.add_meter('lr', utils.SmoothedValue(window_size=1, fmt='{value:.6f}'))
-    metric_logger.add_meter('class_error', utils.SmoothedValue(window_size=1, fmt='{value:.2f}'))
+    metric_logger.add_meter('char_class_error', utils.SmoothedValue(window_size=1, fmt='{value:.2f}'))
+    metric_logger.add_meter('bezier_class_error', utils.SmoothedValue(window_size=1, fmt='{value:.2f}'))
     metric_logger.add_meter('grad_norm', utils.SmoothedValue(window_size=1, fmt='{value:.2f}'))
     header = 'Epoch: [{}]'.format(epoch)
     # print_cnt = 0
@@ -91,13 +92,25 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
     for _ in metric_logger.log_every(range(len(data_loader)), print_freq, header):
         # 计算损失
         outputs = model(samples)
+        # print("\noutputs:\n")
+        # print(outputs)
         loss_dict = criterion(outputs, targets)
         # {'c': {...}, 'b': {...}}
+        # print("\nloss dict:\n")
+        # print(loss_dict)
         weight_dict = criterion.weight_dict
         # {'c': {...}, 'b': {...}}
+        # print("\nweight_dict:\n")
+        # print(weight_dict)
         losses_char = sum(loss_dict['c'][k] * weight_dict['c'][k] for k in loss_dict['c'].keys() if k in weight_dict['c'])
         losses_bezier = sum(loss_dict['b'][k] * weight_dict['b'][k] for k in loss_dict['b'].keys() if k in weight_dict['b'])
         losses = losses_char + losses_bezier
+        # print("\nchar loss:", losses_char, "\nbezier loss:", losses_bezier)
+        # print("\nlosses:\n")
+        # print(losses)
+        # norm_losses = losses_char / losses_char.detach() + losses_bezier / losses_bezier.detach()
+        # print("\nnorm_losses:\n")
+        # print(norm_losses)
         # better?: losses = losses_char / losses_char.detach() + losses_bezier / losses_bezier.detach()
 
         _reduce_and_update(metric_logger, loss_dict, weight_dict, is_training=True)
@@ -138,7 +151,8 @@ def evaluate(model, criterion, postprocessors, data_loader, base_ds, device, out
     criterion.eval()
 
     metric_logger = utils.MetricLogger(delimiter="  ")
-    metric_logger.add_meter('class_error', utils.SmoothedValue(window_size=1, fmt='{value:.2f}'))
+    metric_logger.add_meter('char_class_error', utils.SmoothedValue(window_size=1, fmt='{value:.2f}'))
+    metric_logger.add_meter('bezier_class_error', utils.SmoothedValue(window_size=1, fmt='{value:.2f}'))
     header = 'Test:'
 
     iou_types = tuple(k for k in ('segm', 'bbox') if k in postprocessors.keys())
@@ -155,8 +169,7 @@ def evaluate(model, criterion, postprocessors, data_loader, base_ds, device, out
         )
 
     for samples, targets in metric_logger.log_every(data_loader, print_freq, header):
-        samples = samples.to(device)
-        targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
+        samples, targets = to_cuda(samples, targets, device, non_blocking=False)
 
         outputs = model(samples)
         loss_dict = criterion(outputs, targets)

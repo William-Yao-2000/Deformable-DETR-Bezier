@@ -233,8 +233,8 @@ class SetCriterionPart(nn.Module):
              targets: list of dicts, such that len(targets) == batch_size.
                       The expected keys in each dict depends on the losses applied, see each loss' doc
         """
-        # TODO: 还需要修改
-        outputs_without_aux = copy.deepcopy(outputs)
+        # TODO: 加上aux_loss后还需要修改
+        outputs_without_aux = outputs
         # outputs_without_aux = {k: v for k, v in outputs.items() if k != 'aux_outputs' and k != 'enc_outputs'}
         # 'pred_logits': [bs, num_queries, num_classes]
         # 'pred_boxes': [bs, num_queries, 4]
@@ -245,11 +245,13 @@ class SetCriterionPart(nn.Module):
         # Compute the average number of target boxes or bezier curves accross all nodes, for normalization purposes
         if self.mode == 'c':
             num_xx = sum(len(t["char"]["labels"]) for t in targets)
+            _device = next(iter(outputs["char"].values())).device
             # mini-batch 中所有 target 的 box 的数量总和
         else:
             num_xx = sum(len(t["bezier"]["labels"]) for t in targets)
+            _device = next(iter(outputs["bezier"].values())).device
             # mini-batch 中所有 target 的 bezier curve 的数量总和
-        num_xx = torch.as_tensor([num_xx], dtype=torch.float, device=next(iter(outputs.values())).device)
+        num_xx = torch.as_tensor([num_xx], dtype=torch.float, device=_device)
         if is_dist_avail_and_initialized():
             torch.distributed.all_reduce(num_xx)
         num_xx = torch.clamp(num_xx / get_world_size(), min=1).item()
