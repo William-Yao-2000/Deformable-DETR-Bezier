@@ -179,7 +179,7 @@ def make_coco_transforms(image_set):
                 T.RandomResize(scales, max_size=img_max_size),
                 T.Compose([
                     T.RandomResize([400, 500, 600]),
-                    T.RandomSizeCrop(384, 600),
+                    T.RandomSizeCrop(),
                     T.RandomResize(scales, max_size=img_max_size),
                 ])
             ),
@@ -195,13 +195,37 @@ def make_coco_transforms(image_set):
     raise ValueError(f'unknown {image_set}')
 
 
+def test_transforms(image_set):
+
+    normalize = T.Compose([
+        T.ToTensor(),
+        T.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])  # TODO: 为什么要设置为这些数字？
+    ])
+
+    if image_set == 'train':
+        return T.Compose([
+            T.RandomResize([400, 500, 600]),
+            # T.FixCrop(),
+            T.RandomSizeCrop(),
+        ])
+        
+    if image_set == 'val':
+        return T.Compose([
+            T.Same(),
+            # T.RandomResize([400, 500, 600]),
+            # T.FixCrop(),
+            # T.RandomSizeCrop(384, 600),
+        ])
+
+
 def build(image_set, args):
     root = Path(args.synthtext_path)
+    root_img = Path("/DATACENTER/s/yaowenhao/proj/Deformable-DETR-SynthText-recog/data/synthtext/SynthText")
     assert root.exists(), f'provided Synthtext path {root} does not exist'
     mode = 'instances'
     PATHS = {
-        "train": (root / "SynthText", root / "annotations" / 'synthtext-rec_train2.json'),
-        "val": (root / "SynthText", root / "annotations" / 'synthtext-rec_val2.json'),
+        "train": (root_img, root / "annotations" / 'synthtext-rec_train3.json'),
+        "val": (root_img, root / "annotations" / 'synthtext-rec_val3.json'),
     }
 
     img_folder, ann_file = PATHS[image_set]  # image folder & annotation file
