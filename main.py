@@ -206,6 +206,7 @@ def main(args):
 
     for n, p in model_without_ddp.named_parameters():
         print(n)
+    print("\n\n")
 
     param_dicts = [
         {
@@ -224,8 +225,7 @@ def main(args):
             "lr": args.lr * args.lr_linear_proj_mult,
         }
     ]
-    # test code
-    print(param_dicts)
+    
     # optimizer
     if args.sgd:
         optimizer = torch.optim.SGD(param_dicts, lr=args.lr, momentum=0.9,
