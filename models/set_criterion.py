@@ -47,7 +47,6 @@ class SetCriterion(nn.Module):
                                             losses['b'], mode='b', focal_alpha=focal_alpha)
     
     def forward(self, outputs, targets):
-        # TODO: 貌似 outputs_without_aux 还可以优化
         losses_c = self.criterion_c(outputs, targets)
         losses_b = self.criterion_b(outputs, targets)
         return {"c": losses_c, "b": losses_b}
@@ -85,16 +84,14 @@ class SetCriterionPart(nn.Module):
         """
         idx = _get_src_permutation_idx(indices_x)
 
-        if self.mode == 'c':
-            assert 'pred_logits' in outputs['char']
-            src_logits = outputs['char']['pred_logits']  # [bs, num_queries_c, num_classes_c]
-            target_classes_o = torch.cat([t["char"]["labels"][J] for t, (_, J) in zip(targets, indices_x)])
-            # [\sum_{i=0}^{bs-1} num_target_boxes_i,]
-        else:  # self.mode == 'b'
-            assert 'pred_logits' in outputs['bezier']
-            src_logits = outputs['bezier']['pred_logits']  # [bs, num_queries_b, num_classes_b]
-            target_classes_o = torch.cat([t["bezier"]["labels"][J] for t, (_, J) in zip(targets, indices_x)])
-            # # [\sum_{i=0}^{bs-1} num_target_bezier_i,]
+        # TODO: 代码可以缩减修改
+        xx = 'char' if self.mode == 'c' else 'bezier'
+
+        assert 'pred_logits' in outputs[xx]
+        src_logits = outputs[xx]['pred_logits']
+        # [bs, num_queries_c, num_classes_c] or [bs, num_queries_b, num_classes_b]
+        target_classes_o = torch.cat([t[xx]["labels"][J] for t, (_, J) in zip(targets, indices_x)])
+        # [\sum_{i=0}^{bs-1} num_target_boxes_i,] or [\sum_{i=0}^{bs-1} num_target_bezier_i,]
 
         target_classes = torch.full(src_logits.shape[:2], self.num_classes_x,
                                     dtype=torch.int64, device=src_logits.device)
@@ -125,14 +122,12 @@ class SetCriterionPart(nn.Module):
         """ Compute the cardinality error, ie the absolute error in the number of predicted non-empty object
         This is not really a loss, it is intended for logging purposes only. It doesn't propagate gradients
         """
-        if self.mode == 'c':
-            pred_logits = outputs['char']['pred_logits']
-            device = pred_logits.device
-            tgt_lengths = torch.as_tensor([len(v['char']["labels"]) for v in targets], device=device)
-        else:
-            pred_logits = outputs['bezier']['pred_logits']
-            device = pred_logits.device
-            tgt_lengths = torch.as_tensor([len(v['bezier']["labels"]) for v in targets], device=device)
+        xx = 'char' if self.mode == 'c' else 'bezier'
+
+        pred_logits = outputs[xx]['pred_logits']
+        device = pred_logits.device
+        tgt_lengths = torch.as_tensor([len(v[xx]["labels"]) for v in targets], device=device)
+
         # Count the number of predictions that are NOT "no-object" (which is the last class)
         card_pred = (pred_logits.argmax(-1) != pred_logits.shape[-1] - 1).sum(1)
         card_err = F.l1_loss(card_pred.float(), tgt_lengths.float())
@@ -233,24 +228,19 @@ class SetCriterionPart(nn.Module):
              targets: list of dicts, such that len(targets) == batch_size.
                       The expected keys in each dict depends on the losses applied, see each loss' doc
         """
-        # TODO: 加上aux_loss后还需要修改
-        outputs_without_aux = outputs
-        # outputs_without_aux = {k: v for k, v in outputs.items() if k != 'aux_outputs' and k != 'enc_outputs'}
-        # 'pred_logits': [bs, num_queries, num_classes]
-        # 'pred_boxes': [bs, num_queries, 4]
+        outputs_without_aux_c = {k: v for k, v in outputs["char"].items() if k != 'aux_outputs' and k != 'enc_outputs'}
+        outputs_without_aux_b = {k: v for k, v in outputs["bezier"].items() if k != 'aux_outputs' and k != 'enc_outputs'}
+        outputs_without_aux = {"char": outputs_without_aux_c, "bezier": outputs_without_aux_b}
 
         # Retrieve the matching between the outputs of the last layer and the targets
         indices_x = self.matcher_x(outputs_without_aux, targets)
 
         # Compute the average number of target boxes or bezier curves accross all nodes, for normalization purposes
-        if self.mode == 'c':
-            num_xx = sum(len(t["char"]["labels"]) for t in targets)
-            _device = next(iter(outputs["char"].values())).device
-            # mini-batch 中所有 target 的 box 的数量总和
-        else:
-            num_xx = sum(len(t["bezier"]["labels"]) for t in targets)
-            _device = next(iter(outputs["bezier"].values())).device
-            # mini-batch 中所有 target 的 bezier curve 的数量总和
+        xx = 'char' if self.mode == 'c' else 'bezier'
+        
+        num_xx = sum(len(t[xx]["labels"]) for t in targets)
+        _device = next(iter(outputs[xx].values())).device
+        # mini-batch 中所有 target 的 box 或 bezier curve 的数量总和
         num_xx = torch.as_tensor([num_xx], dtype=torch.float, device=_device)
         if is_dist_avail_and_initialized():
             torch.distributed.all_reduce(num_xx)
@@ -264,10 +254,10 @@ class SetCriterionPart(nn.Module):
             losses_x.update(self.get_loss(loss, outputs, targets, indices_x, num_xx, **kwargs))
 
         # In case of auxiliary losses, we repeat this process with the output of each intermediate layer.
-        # TODO: 还需要修改
-        if 'aux_outputs' in outputs:
-            for i, aux_outputs in enumerate(outputs['aux_outputs']):
-                indices_c = self.matcher(aux_outputs, targets)
+        if 'aux_outputs' in outputs[xx]:
+            for i, aux_outputs in enumerate(outputs[xx]['aux_outputs']):
+                aux_outputs = {xx: aux_outputs}
+                indices_x = self.matcher_x(aux_outputs, targets)
                 for loss in self.losses_x:
                     if loss == 'masks':
                         # Intermediate masks losses are too costly to compute, we ignore them.
@@ -276,7 +266,7 @@ class SetCriterionPart(nn.Module):
                     if loss == 'labels':
                         # Logging is enabled only for the last layer
                         kwargs['log'] = False
-                    l_dict = self.get_loss(loss, aux_outputs, targets, indices_c, num_xx, **kwargs)
+                    l_dict = self.get_loss(loss, aux_outputs, targets, indices_x, num_xx, **kwargs)
                     l_dict = {k + f'_{i}': v for k, v in l_dict.items()}
                     losses_x.update(l_dict)
 

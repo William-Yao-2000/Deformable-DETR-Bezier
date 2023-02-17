@@ -253,7 +253,8 @@ class DeformableDETR(nn.Module):
         }
 
         if self.aux_loss:
-            # out['aux_outputs'] = self._set_aux_loss(outputs_class, outputs_coord)
+            out['char']['aux_outputs'] = self._set_aux_loss(outputs_class_c, outputs_coord_c, mode='c')
+            out['bezier']['aux_outputs'] = self._set_aux_loss(outputs_class_b, outputs_coord_b, mode='b')
             # TODO: need to revise
             pass
 
@@ -263,12 +264,14 @@ class DeformableDETR(nn.Module):
         return out  # a dictionary
 
     @torch.jit.unused
-    def _set_aux_loss(self, outputs_class, outputs_coord):
+    def _set_aux_loss(self, outputs_class_x, outputs_coord_x, mode):
         # this is a workaround to make torchscript happy, as torchscript
         # doesn't support dictionary with non-homogeneous values, such
         # as a dict having both a Tensor and a list.
-        return [{'pred_logits': a, 'pred_boxes': b}
-                for a, b in zip(outputs_class[:-1], outputs_coord[:-1])]
+        assert mode in ('c', 'b')
+        pred_xx = 'pred_boxes' if mode == 'c' else 'pred_points'
+        return [{'pred_logits': a, pred_xx: b}
+                for a, b in zip(outputs_class_x[:-1], outputs_coord_x[:-1])]
 
 
 class PostProcess(nn.Module):
@@ -353,34 +356,37 @@ def build(args):
 
     # 定义匹配器及损失函数
     matcher = build_matcher(args)  # 匈牙利二分图匹配，a dict
+    
+    # weight_dict
     weight_dict = {"c": {}, "b": {}}
-    # -- the character part --
     weight_dict["c"] = {'loss_ce': args.cls_c_loss_coef,
                         'loss_bbox': args.bbox_loss_coef, 
                         'loss_giou': args.giou_loss_coef}
     if args.masks:
         weight_dict["c"]["loss_mask"] = args.mask_loss_coef
         weight_dict["c"]["loss_dice"] = args.dice_loss_coef
-    # TODO this is a hack
-    if args.aux_loss:
-        aux_weight_dict = {}
-        for i in range(args.dec_layers - 1):
-            aux_weight_dict.update({k + f'_{i}': v for k, v in weight_dict.items()})
-        aux_weight_dict.update({k + f'_enc': v for k, v in weight_dict.items()})
-        weight_dict["c"].update(aux_weight_dict)
-    # -- the bezier part --
     weight_dict["b"] = {'loss_ce': args.cls_b_loss_coef,
                         'loss_point': args.point_loss_coef}
+    # TODO this is a hack
+    if args.aux_loss:
+        aux_weight_dict_c, aux_weight_dict_b = {}, {}
+        for i in range(args.dec_layers - 1):  # TODO: 以后两个decoder可能层数不一样，注意就是了
+            aux_weight_dict_c.update({k + f'_{i}': v for k, v in weight_dict["c"].items()})
+            aux_weight_dict_b.update({k + f'_{i}': v for k, v in weight_dict["b"].items()})
+        weight_dict["c"].update(aux_weight_dict_c)
+        weight_dict["b"].update(aux_weight_dict_b)
+    if args.two_stage:
+        weight_dict["c"].update({k + f'_enc': v for k, v in weight_dict["c"].items()})
+        weight_dict["b"].update({k + f'_enc': v for k, v in weight_dict["b"].items()})
 
+    # losses
     losses = {"c": [], "b": []}
-    # -- the character part --
     losses["c"] = ['labels', 'boxes', 'cardinality']
     if args.masks:
         losses["c"] += ["masks"]
-    # -- the bezier part --
     losses["b"] = ['labels', 'points', 'cardinality']
-    # num_classes, matcher, weight_dict, losses, focal_alpha=0.25
-    # TODO: 这里还没改
+
+    # criterion
     criterion = build_set_criterion(num_classes, matcher, weight_dict, losses, 
                                     focal_alpha=args.focal_alpha)
     criterion.to(device)
