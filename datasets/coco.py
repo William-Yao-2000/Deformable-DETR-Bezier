@@ -220,7 +220,7 @@ def test_transforms(image_set):
 
 def build(image_set, args):
     root = Path(args.synthtext_path)
-    root_img = Path("/DATACENTER/s/yaowenhao/proj/Deformable-DETR-SynthText-recog/data/synthtext/SynthText")
+    root_img = Path("/DATACENTER/raid0/yaowenhao/proj/Deformable-DETR-Synthtext-recog/data/synthtext/SynthText")
     assert root.exists(), f'provided Synthtext path {root} does not exist'
     mode = 'instances'
     PATHS = {
