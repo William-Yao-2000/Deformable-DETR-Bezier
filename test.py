@@ -234,6 +234,11 @@
 # print(tgt)
 
 
-num_queries = (330, 100)
-print(num_queries)
-print(sum(num_queries))
+# num_queries = (330, 100)
+# print(num_queries)
+# print(sum(num_queries))
+
+
+mode = 'b'
+xx = 'char' if mode == 'c' else 'bezier'
+print(xx)
