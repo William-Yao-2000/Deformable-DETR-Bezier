@@ -88,7 +88,7 @@ def get_args_parser():
                         help="Dropout applied in the transformer")
     parser.add_argument('--nheads', default=8, type=int,
                         help="Number of attention heads inside the transformer's attentions")
-    parser.add_argument('--num_queries', default=330, type=int,
+    parser.add_argument('--num_queries', default=(330, 100), type=tuple,
                         help="Number of query slots")  # origin: 300
     parser.add_argument('--dec_n_points', default=4, type=int)
     parser.add_argument('--enc_n_points', default=4, type=int)
@@ -103,24 +103,33 @@ def get_args_parser():
                         help="Disables auxiliary decoding losses (loss at each layer)")
 
     # * Matcher
-    parser.add_argument('--set_cost_class', default=2, type=float,
-                        help="Class coefficient in the matching cost")
+    parser.add_argument('--set_cost_class_c', default=2, type=float,
+                        help="Character class coefficient in the matching cost")
     parser.add_argument('--set_cost_bbox', default=5, type=float,
                         help="L1 box coefficient in the matching cost")
     parser.add_argument('--set_cost_giou', default=2, type=float,
                         help="giou box coefficient in the matching cost")
 
+    parser.add_argument('--set_cost_class_b', default=2, type=float,
+                        help="Bezier curve class coefficient in the matching cost")
+    parser.add_argument('--set_cost_point', default=5, type=float,
+                        help="L2 point coefficient in the matching cost")
+
     # * Loss coefficients
     # 各项损失的权重
     parser.add_argument('--mask_loss_coef', default=1, type=float)
     parser.add_argument('--dice_loss_coef', default=1, type=float)
-    parser.add_argument('--cls_loss_coef', default=2, type=float)
+    parser.add_argument('--cls_c_loss_coef', default=2, type=float)
     parser.add_argument('--bbox_loss_coef', default=5, type=float)
     parser.add_argument('--giou_loss_coef', default=2, type=float)
+
+    parser.add_argument('--cls_b_loss_coef', default=2, type=float)
+    parser.add_argument('--point_loss_coef', default=5, type=float)
+
     parser.add_argument('--focal_alpha', default=0.25, type=float)
 
     # dataset parameters
-    parser.add_argument('--dataset_file', default='coco')
+    parser.add_argument('--dataset_file', default='synthtext', choices=('coco', 'coco_panoptic', 'synthtext'))
     parser.add_argument('--coco_path', default='./data/coco', type=str)
     parser.add_argument('--coco_panoptic_path', type=str)
     parser.add_argument('--remove_difficult', action='store_true')
@@ -325,7 +334,7 @@ def main(args):
     print('Inference time {}'.format(total_time_str))
 
     print("\n--------GT--------")
-    gt_mat_path = "./data/synthtext/SynthText/gt.mat"
+    gt_mat_path = "/DATACENTER/s/yaowenhao/proj/Deformable-DETR-SynthText-recog/data/synthtext/SynthText/gt.mat"
     gt_path = vis_gt(args.inference_img_path, transforms, gt_mat_path)
     # all_numpy_arr = np.array(all_lst)
     # np.save('log_numpy.npy', all_numpy_arr)
@@ -351,41 +360,69 @@ def inference(model, img_path, device, transforms, num2char, model_ver):
     print(img_size)
     
     output = model(img)
-    out_logits, out_bbox = output['pred_logits'], output['pred_boxes']
-    print('\noutput shape:')
-    print('pred_logits:', out_logits.shape)
+    out_logits_c, out_bbox = output['char']['pred_logits'], output['char']['pred_boxes']
+    print('\nchar output shape:')
+    print('pred_logits:', out_logits_c.shape)
     print('pred_boxes:', out_bbox.shape)
 
     # post process
-    prob = out_logits.sigmoid()
+    prob_c = out_logits_c.sigmoid()
     # TODO: 现在感觉最麻烦的就是这个地方了
-    topk_values, topk_indexes = torch.topk(prob.view(out_logits.shape[0], -1), 100, dim=1)  # [bs, 20]
-    scores = topk_values
-    print('scores shape:', scores.shape)
-    topk_boxes = topk_indexes // out_logits.shape[2]
-    labels = topk_indexes % out_logits.shape[2]
-    print('label shape:', labels.shape)
-    print(labels)
+    topk_values_c, topk_indexes_c = torch.topk(prob_c.view(out_logits_c.shape[0], -1), 100, dim=1)  # [bs, 20]
+    scores_c = topk_values_c
+    print('scores shape:', scores_c.shape)
+    topk_boxes = topk_indexes_c // out_logits_c.shape[2]
+    labels_c = topk_indexes_c % out_logits_c.shape[2]
+    print('label shape:', labels_c.shape)
+    print(labels_c)
     boxes = box_ops.box_cxcywh_to_xyxy(out_bbox)
     boxes = torch.gather(boxes, 1, topk_boxes.unsqueeze(-1).repeat(1,1,4))  # 根据索引来取得对应结果
     # print(boxes)
     threshold = 0.3
     
     vslzr = visualizer.COCOVisualizer()
+
     boxes = box_ops.box_xyxy_to_cxcywh(boxes)
-    select_mask = scores > threshold
+    select_mask_c = scores_c > threshold
     # print('select mask:', select_mask)
-    pred_dict = {
-        'boxes': boxes[select_mask],  # xywh, [0,1]
+    pred_dict_c = {
+        'boxes': boxes[select_mask_c],  # xywh, [0,1]
         'size': img_size,
-        'box_label': [num2char[c.item()] for c in labels[select_mask]],
+        'box_label': [num2char[c.item()] for c in labels_c[select_mask_c]],
         'caption': 'inference',
     }
-    print(pred_dict['boxes'])
+    print(pred_dict_c['boxes'])
+    
+    out_logits_b, out_point = output['bezier']['pred_logits'], output['bezier']['pred_points']
+    print('\nbezier output shape:')
+    print('pred_logits:', out_logits_b.shape)
+    print('pred_points:', out_point.shape)
+
+    # post process
+    prob_b = out_logits_b.sigmoid()
+    # TODO: 现在感觉最麻烦的就是这个地方了
+    topk_values_b, topk_indexes_b = torch.topk(prob_b.view(out_logits_b.shape[0], -1), 60, dim=1)  # [bs, 20]
+    scores_b = topk_values_b
+    print('scores shape:', scores_b.shape)
+    topk_curves = topk_indexes_b // out_logits_b.shape[2]
+    labels_b = topk_indexes_b % out_logits_b.shape[2]
+    print('label shape:', labels_b.shape)
+    print(labels_b)
+    points = torch.gather(out_point, 1, topk_curves.unsqueeze(-1).repeat(1,1,8))  # 根据索引来取得对应结果
+    # print(boxes)
+    threshold = 0.3
+    select_mask_b = scores_b > threshold
+    # print('select mask:', select_mask)
+    pred_dict_b = {
+        'curves': points[select_mask_b],  # x1y1x2y2x3y3x4y4, [0,1]
+        'size': img_size,
+    }
+
     img_cpu = img.squeeze(0).to('cpu')
     print(img_cpu.shape)
+
     savedir = f'./vis/visual_result/{model_ver}'
-    vslzr.visualize(img_path, img_cpu, pred_dict, savedir=savedir, dpi=200)
+    vslzr.visualize(img_path, img_cpu, pred_dict_c, pred_dict_b, savedir=savedir, dpi=200)
 
     dir_num, file_name = img_path.split('/')[-2:]
     file_name = file_name[:-4]
@@ -403,6 +440,24 @@ def get_bbox_gt(coordinates: np.ndarray, img_size):
     x_min, x_max = torch.tensor(x_min) / img_size[0], torch.tensor(x_max) / img_size[0]
     y_min, y_max = torch.tensor(y_min) / img_size[1], torch.tensor(y_max) / img_size[1]
     return torch.stack((x_min, y_min, x_max, y_max), dim=-1)
+
+
+def get_point_gt(coord_w_gt: np.ndarray, img_size):
+    assert coord_w_gt.ndim == 3  # [2, 4, char_num]
+    coord_w_gt = coord_w_gt.transpose(2, 1, 0)
+    # [num_bezier, 4, 2]    num_bezier == num_words
+    pt1, pt2, pt3, pt4 = np.split(coord_w_gt, 4, axis=1)
+    # [num_bezier, 1, 2]
+    pt_start, pt_end = ((pt1+pt4)/2).squeeze(1), ((pt2+pt3)/2).squeeze(1)
+    # [num_bezier, 2]
+    bp1, bp2, bp3, bp4 = pt_start, (pt_start*2+pt_end*1)/3, (pt_start*1+pt_end*2)/3, pt_end
+    # [num_bezier, 2]
+    bezier_points = np.concatenate((bp1, bp2, bp3, bp4), axis=1)
+    bezier_points = np.array(bezier_points, dtype=np.float64)
+    bezier_points = np.around(bezier_points, 2)
+    bezier_points = torch.tensor(bezier_points, dtype=torch.float64)
+    bezier_points = bezier_points / torch.tensor([img_size[0], img_size[1]]*4)
+    return bezier_points
 
 
 def get_string(text_lst):
@@ -432,31 +487,41 @@ def vis_gt(img_path_gt: str, transforms, gt_mat_path):
     for i in range(total):
         if features["imnames"][0][i][0] == img_path_find:
             print("HAHA!!")
-            coordinates_gt = features['charBB'][0][i]
+            coord_c_gt = features['charBB'][0][i]
             # 产生的bbox是xxyy，未经过归一化
-            coordinates_gt = get_bbox_gt(coordinates_gt, origin_img_gt_size)
+            coord_c_gt = get_bbox_gt(coord_c_gt, origin_img_gt_size)
             text_lst = features["txt"][0][i]
             label_string = get_string(text_lst)
-            print("shape of coordinates:", coordinates_gt.shape)
+            print("shape of coordinates:", coord_c_gt.shape)
             print("len of label string:", len(label_string))
             print(label_string)
-            assert len(label_string) == coordinates_gt.shape[0]
+            assert len(label_string) == coord_c_gt.shape[0]
+            coord_w_gt = features['wordBB'][0][i]
+            if coord_w_gt.ndim == 2:
+                coord_w_gt = coord_w_gt[..., None]
+            bezier_points = get_point_gt(coord_w_gt, origin_img_gt_size)
             break
 
     vslzr = visualizer.COCOVisualizer()
-    boxes_gt = box_ops.box_xyxy_to_cxcywh(coordinates_gt)
+    boxes_gt = box_ops.box_xyxy_to_cxcywh(coord_c_gt)
     # print('select mask:', select_mask)
-    pred_dict = {
+    gt_dict_c = {
         'boxes': boxes_gt,  # xywh, [0,1]
         'size': img_gt_size,
         'box_label': [c for c in label_string],
         'caption': 'ground truth',
     }
+    
+    gt_dict_b = {
+        'curves': bezier_points,
+        'size': img_gt_size,
+    }
+    
     # print(pred_dict['boxes'])
     img_cpu = img_gt.squeeze(0).to('cpu')
     print(img_cpu.shape)
     savedir = './vis/gt_temp'
-    vslzr.visualize(img_path_gt, img_cpu, pred_dict, savedir=savedir, dpi=200)
+    vslzr.visualize(img_path_gt, img_cpu, gt_dict_c, gt_dict_b, savedir=savedir, dpi=200)
 
     dir_num, file_name = img_path_gt.split('/')[-2:]
     file_name = file_name[:-4]

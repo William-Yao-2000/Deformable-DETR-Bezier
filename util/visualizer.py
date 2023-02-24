@@ -59,7 +59,7 @@ class COCOVisualizer():
     def __init__(self) -> None:
         pass
 
-    def visualize(self, img_path, img, tgt, caption=None, dpi=120, savedir=None, show_in_console=True):
+    def visualize(self, img_path, img, tgt_c, tgt_b, caption=None, dpi=120, savedir=None, show_in_console=True):
         """
         img: tensor(3, H, W)
         tgt: make sure they are all on cpu.
@@ -73,7 +73,9 @@ class COCOVisualizer():
         #     import ipdb; ipdb.set_trace()
         ax.imshow(img)
         
-        self.addtgt(tgt)
+        self.addtgt_c(tgt_c)
+        # TODO: 加上 addtgt_b
+        self.addtgt_b(tgt_b)
         if show_in_console:
             plt.show()
 
@@ -92,7 +94,7 @@ class COCOVisualizer():
             plt.savefig(savename)
         plt.close()
 
-    def addtgt(self, tgt):
+    def addtgt_c(self, tgt):
         """
         - tgt: dict. args:
             - boxes: num_boxes, 4. xywh, [0,1].
@@ -133,5 +135,27 @@ class COCOVisualizer():
 
         if 'caption' in tgt:
             ax.set_title(tgt['caption'], wrap=True)
+    
 
+    def addtgt_b(self, tgt):
+        """
+        - tgt: dict. args:
+            - curves: num_curves, 8. x1y1x2y2x3y3x4y4, [0,1].
+            - size: img size.
+        """
+        assert 'curves' in tgt
+        ax = plt.gca()
+        H, W = tgt['size'].tolist() 
+        numcurve = tgt['curves'].shape[0]
+
+        color = []
+        curves = []
+        for curve in tgt['curves'].cpu():
+            unnormcurve = curve * torch.Tensor([W, H]*4)
+            [x1, y1, x2, y2, x3, y3, x4, y4] = unnormcurve.tolist()
+            points = [[x1, y1], [x2, y2], [x4, y4]]
+            c = (np.random.random((1, 3))*0.6+0.4).tolist()[0]
+            for x, y in points:
+                ax.scatter(x, y, s=3, c=np.array(c).reshape(1, -1))
+        
 

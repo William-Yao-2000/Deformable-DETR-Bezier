@@ -1,5 +1,6 @@
 from matplotlib import pyplot as plt
 import numpy as np
+import os
 
 
 def get_fig_data(filepath):
@@ -29,41 +30,32 @@ def get_fig_data(filepath):
     return np.array(data_lst)
 
 
-f1 = './log/log_v002-no_aux_loss.txt'
-f2 = './log/log_v002.txt'
+datas = dict()
+log_dir = "./log"
+for root, dirs, files in os.walk(log_dir):
+    for file in files:
+        key = root.split('\\')[-1]
+        key = key + file[8:-4]
+        datas[key] = get_fig_data(os.path.join(root, file))
 
-data1, data2 = get_fig_data(f1), get_fig_data(f2)
-print(data1)
-print("")
-print(data2)
-
-
-f3 = './log/recog/log_v002.txt'
-f4 = './log/recog/log_v002-bbox-ref.txt'
-
-data3, data4 = get_fig_data(f3), get_fig_data(f4)
-print("")
-print(data3)
-print("")
-print(data4)
-
+print(datas.keys())
 
 n_row = 1
 n_col = 2
 fig, axs = plt.subplots(n_row, n_col, figsize=(11, 5))
-line_sst = ['r*--', 'g*-', 'm--', 'grey']
-marker_sst = ['.','+','x','D']
+line_sst = ['r*--', 'g*-', 'm--', 'grey', 'b*--', 'black']
+marker_sst = ['.','+','x','.','+','x']
 label_sst = []
 x_lab_sst = ['x','x']
 y_lab_sst = ['y','y']
 title_sst = ['title_1','title_2','title_3','title_4']
 idx = 0
 
-def subplot(ax, data1, data2, data3, data4, ylabel):
-    ax.plot(data1, line_sst[0], marker=marker_sst[0], linewidth=1., label='bezier--no aux loss')
-    ax.plot(data2, line_sst[1], marker=marker_sst[1], linewidth=1., label='bezier--with aux loss')
-    ax.plot(data3, line_sst[2], marker=marker_sst[2], linewidth=1., label='recog--with aux loss')
-    ax.plot(data4, line_sst[3], marker=marker_sst[3], linewidth=1., label='recog--bbox refinement')
+def subplot(ax, datas, ylabel):
+    cnt = 0
+    for k, data in datas.items():
+        ax.plot(data, line_sst[cnt], marker=marker_sst[cnt], linewidth=1., label=k)
+        cnt += 1
     ax.legend(loc='lower right') # 图例位置
     ax.set_xlabel('epoch')
     ax.set_ylabel(ylabel)
@@ -71,8 +63,10 @@ def subplot(ax, data1, data2, data3, data4, ylabel):
 
 
 ax1, ax2 = axs
-subplot(ax1, data1[:, 0], data2[:, 0], data3[:, 0], data4[:, 0], 'AP--0.50:0.95')
-subplot(ax2, data1[:, 6], data2[:, 6], data3[:, 6], data4[:, 6],  'AR--0.50:0.95')
+datas_ap = {k: v[:, 0] for k, v in datas.items()}
+datas_ar = {k: v[:, 6] for k, v in datas.items()}
+subplot(ax1, datas_ap, 'AP--0.50:0.95')
+subplot(ax2, datas_ar,  'AR--0.50:0.95')
 plt.tight_layout() # 让图形不那么挤
 plt.show()
 fig.savefig('./vis/train_fig.svg', format='svg', dpi=150)
