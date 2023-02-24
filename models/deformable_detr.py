@@ -121,11 +121,16 @@ class DeformableDETR(nn.Module):
         if with_box_refine:
             # 深复制
             # TODO: bezier curve 的部分还没加上去
-            self.class_embed = _get_clones(self.class_embed, num_pred_c)
+            self.class_embed_c = _get_clones(self.class_embed_c, num_pred_c)
             self.bbox_embed = _get_clones(self.bbox_embed, num_pred_c)
             nn.init.constant_(self.bbox_embed[0].layers[-1].bias.data[2:], -2.0)
             # hack implementation for iterative bounding box refinement
-            self.transformer.decoder.bbox_embed = self.bbox_embed
+            self.transformer.decoder_c.bbox_embed = self.bbox_embed
+
+            self.class_embed_b = _get_clones(self.class_embed_b, num_pred_c)
+            self.point_embed = _get_clones(self.point_embed, num_pred_c)
+            # hack implementation for iterative bounding box refinement
+            self.transformer.decoder_b.point_embed = self.point_embed
         else:
             # 将输出 bounding-box 长和宽的偏移设置为-2.0，反正最后还要再通过 sigmoid 函数
             nn.init.constant_(self.bbox_embed.layers[-1].bias.data[2:], -2.0)
@@ -235,8 +240,10 @@ class DeformableDETR(nn.Module):
             else:
                 reference_b = inter_references["b"][lvl - 1]
             reference_b = inverse_sigmoid(reference_b)
+            assert reference_b.shape[-1] == 2
             outputs_class_b = self.class_embed_b[lvl](hs["b"][lvl])  # [bs, num_queries_b, num_classes_b]
             tmp_b = self.point_embed[lvl](hs["b"][lvl])  # [bs, num_queries_b, 8]
+            tmp_b += torch.cat([reference_b]*4, -1)
             outputs_coord_b = tmp_b.sigmoid()
             outputs_classes_b.append(outputs_class_b)
             outputs_coords_b.append(outputs_coord_b)

@@ -200,7 +200,7 @@ class DeformableTransformer(nn.Module):
             query_embed_b = query_embed_b.unsqueeze(0).expand(bs, -1, -1)   # [bs, num_queries_b, d_model]
             tgt_b = tgt_b.unsqueeze(0).expand(bs, -1, -1)
             reference_points_c = self.reference_points_c(query_embed_c).sigmoid()  # 直接用一个线性层学习出参考点，[bs, num_queries_c, 2]
-            reference_points_b = self.reference_points_b(query_embed_b).sigmoid()
+            reference_points_b = self.reference_points_b(query_embed_b).sigmoid()  # 直接用一个线性层学习出参考点，[bs, num_queries_b, 2]
             init_reference_out_c, init_reference_out_b = reference_points_c, reference_points_b
 
         # dual decoders
@@ -405,7 +405,9 @@ class DeformableTransformerDecoder(nn.Module):
         self.return_intermediate = return_intermediate
         # hack implementation for iterative bounding box refinement and two-stage Deformable DETR
         self.bbox_embed = None
-        self.class_embed = None
+        self.class_embed_c = None
+        self.point_embed = None
+        self.class_embed_b = None
 
     def forward(self, tgt, reference_points, src, src_spatial_shapes, src_level_start_index, src_valid_ratios,
                 query_pos=None, src_padding_mask=None):
@@ -442,7 +444,7 @@ class DeformableTransformerDecoder(nn.Module):
             output = layer(output, query_pos, reference_points_input, src, src_spatial_shapes, src_level_start_index, src_padding_mask)
             # [bs, num_queries, d_model]
 
-            # hack implementation for iterative bounding box refinement
+            # hack implementation for iterative bounding box refinement or control point refinement
             if self.bbox_embed is not None:
                 tmp = self.bbox_embed[lid](output)
                 if reference_points.shape[-1] == 4:
@@ -454,6 +456,14 @@ class DeformableTransformerDecoder(nn.Module):
                     new_reference_points[..., :2] = tmp[..., :2] + inverse_sigmoid(reference_points)
                     new_reference_points = new_reference_points.sigmoid()
                 reference_points = new_reference_points.detach()
+            elif self.point_embed is not None:
+                assert reference_points.shape[-1] == 2
+                tmp = self.point_embed[lid](output)
+                tmp_x, tmp_y = torch.mean(tmp[..., 0::2], -1), torch.mean(tmp[..., 1::2], -1)
+                tmp = torch.stack((tmp_x, tmp_y), -1)
+                new_reference_points = tmp + inverse_sigmoid(reference_points)
+                new_reference_points = new_reference_points.sigmoid()
+                
 
             if self.return_intermediate:
                 intermediate.append(output)
