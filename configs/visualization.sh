@@ -9,9 +9,9 @@ if [ ${box_refine_flag} -eq 1 ]
 then
     modelpath="./exps/v002-box-refine/checkpoint0014.pth"
 else
-    modelpath="./exps/v002/checkpoint0014.pth"
+    modelpath="./exps/v002-absolute_coord-no_aux_loss/checkpoint0014.pth"
 fi
-echo "modelpath: ${modelpath}"
+echo "model path: ${modelpath}"
 
 imgpath_lst="8/ballet_3_0.jpg     12/batman_3_24.jpg  72/hiking_5_32.jpg  160/stage_4_60.jpg \
             200/zoo_99_96.jpg    200/zoo_99_97.jpg   200/zoo_99_98.jpg   200/zoo_99_99.jpg"
@@ -19,7 +19,7 @@ imgpath_lst="8/ballet_3_0.jpg     12/batman_3_24.jpg  72/hiking_5_32.jpg  160/st
 for imgpath in ${imgpath_lst}
 do
     echo "\n\n\n----------------${imgpath}----------------"
-    imgpath="./data/synthtext/SynthText/${imgpath}"
+    imgpath="/DATACENTER/s/yaowenhao/proj/Deformable-DETR-SynthText-recog/data/synthtext/SynthText/${imgpath}"
     if [ ${box_refine_flag} -eq 1 ]
     then  # 加载有 bbox refinement 选项的模型
         python inference_visualization_connect.py \
@@ -28,6 +28,7 @@ do
             --inference_img_path=${imgpath}
     else
         python inference_visualization_connect.py \
+            --no_aux_loss \
             --resume=${modelpath} \
             --inference_img_path=${imgpath}
     fi

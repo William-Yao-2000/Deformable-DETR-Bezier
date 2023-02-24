@@ -2,7 +2,7 @@
 
 set -x
 
-EXP_DIR=exps/v002
+EXP_DIR=exps/v002-relative_coord
 PY_ARGS=${@:1}
 
 python -u main.py \
@@ -11,3 +11,6 @@ python -u main.py \
     --lr 4e-5 \
     --lr_backbone 4e-6 \
     ${PY_ARGS}
+
+
+# 主要修改的是 deformable-DETR 里面的 bezier control points 预测部分，变成了预测四个点到参考点的偏移量
