@@ -73,50 +73,70 @@ class DeformableTransformer(nn.Module):
         normal_(self.level_embed)
 
     def get_proposal_pos_embed(self, proposals):
+        """
+        Args:
+            proposals: [bs, topk, 4]
+        """
         num_pos_feats = 128
         temperature = 10000
         scale = 2 * math.pi
 
-        dim_t = torch.arange(num_pos_feats, dtype=torch.float32, device=proposals.device)
-        dim_t = temperature ** (2 * (dim_t // 2) / num_pos_feats)
-        # N, L, 4
-        proposals = proposals.sigmoid() * scale
-        # N, L, 4, 128
-        pos = proposals[:, :, :, None] / dim_t
-        # N, L, 4, 64, 2
+        dim_t = torch.arange(num_pos_feats, dtype=torch.float32, device=proposals.device)  # [num_pos_feats,]
+        dim_t = temperature ** (2 * (dim_t // 2) / num_pos_feats)  # [num_pos_feats,]
+        proposals = proposals.sigmoid() * scale  # [bs, topk, 4]
+        pos = proposals[:, :, :, None] / dim_t  # [bs, topk, 4, 128]
         pos = torch.stack((pos[:, :, :, 0::2].sin(), pos[:, :, :, 1::2].cos()), dim=4).flatten(2)
+        # [bs, topk, 4, 64, 2] --> [bs, topk, 4*64*2]
         return pos
 
     def gen_encoder_output_proposals(self, memory, memory_padding_mask, spatial_shapes):
+        """
+        Args:
+            memory: [bs, \sum_{l=0}^{L-1} h_l * w_l, c]
+            memory_padding_mask: [bs, \sum_{l=0}^{L-1} h_l * w_l]
+            spatial_shapes: [L, 2]
+
+        Returns:
+            output_memory: 经过线性投射和归一化的memory，[bs, \sum_{l=0}^{L-1} h_l * w_l, c]
+            output_proposals: 每个sample的每个位置的特征对应的初始化的proposal，[bs, \sum_{l=0}^{L-1} h_l * w_l, 4]
+        """
         N_, S_, C_ = memory.shape
         base_scale = 4.0
         proposals = []
         _cur = 0
         for lvl, (H_, W_) in enumerate(spatial_shapes):
-            mask_flatten_ = memory_padding_mask[:, _cur:(_cur + H_ * W_)].view(N_, H_, W_, 1)
-            valid_H = torch.sum(~mask_flatten_[:, :, 0, 0], 1)
-            valid_W = torch.sum(~mask_flatten_[:, 0, :, 0], 1)
+            mask_flatten_ = memory_padding_mask[:, _cur:(_cur + H_ * W_)].view(N_, H_, W_, 1)  # [bs, h_l, w_l, 1]
+            valid_H = torch.sum(~mask_flatten_[:, :, 0, 0], 1)  # [bs,]
+            valid_W = torch.sum(~mask_flatten_[:, 0, :, 0], 1)  # [bs,]
 
             grid_y, grid_x = torch.meshgrid(torch.linspace(0, H_ - 1, H_, dtype=torch.float32, device=memory.device),
                                             torch.linspace(0, W_ - 1, W_, dtype=torch.float32, device=memory.device))
-            grid = torch.cat([grid_x.unsqueeze(-1), grid_y.unsqueeze(-1)], -1)
+            # grid_y, grid_x: [h_l, w_l]
+            grid = torch.cat([grid_x.unsqueeze(-1), grid_y.unsqueeze(-1)], -1)  # [h_l, w_l, 2]
+            # 每个点的坐标
 
-            scale = torch.cat([valid_W.unsqueeze(-1), valid_H.unsqueeze(-1)], 1).view(N_, 1, 1, 2)
-            grid = (grid.unsqueeze(0).expand(N_, -1, -1, -1) + 0.5) / scale
-            wh = torch.ones_like(grid) * 0.05 * (2.0 ** lvl)
-            proposal = torch.cat((grid, wh), -1).view(N_, -1, 4)
+            scale = torch.cat([valid_W.unsqueeze(-1), valid_H.unsqueeze(-1)], 1).view(N_, 1, 1, 2)  # 每个sample的有效尺寸，[bs, 1, 1, 2]
+            grid = (grid.unsqueeze(0).expand(N_, -1, -1, -1) + 0.5) / scale  # 归一化，[bs, h_l, w_l, 2]
+            wh = torch.ones_like(grid) * 0.05 * (2.0 ** lvl)  # [bs, h_l, w_l, 2]
+            # 对应原始图片的宽高（不同层次的特征对应不同大小的初始候选框）
+            proposal = torch.cat((grid, wh), -1).view(N_, -1, 4)  # [bs, h_l * w_l, 4]
             proposals.append(proposal)
             _cur += (H_ * W_)
-        output_proposals = torch.cat(proposals, 1)
+        output_proposals = torch.cat(proposals, 1)  # [bs, \sum_{l=0}^{L-1} h_l * w_l, 4]
         output_proposals_valid = ((output_proposals > 0.01) & (output_proposals < 0.99)).all(-1, keepdim=True)
-        output_proposals = torch.log(output_proposals / (1 - output_proposals))
+        # 舍弃靠近边界的点
+        output_proposals = torch.log(output_proposals / (1 - output_proposals))  # [bs, \sum_{l=0}^{L-1} h_l * w_l, 4]
+        # 编码，这是sigmoid函数的反函数
         output_proposals = output_proposals.masked_fill(memory_padding_mask.unsqueeze(-1), float('inf'))
+        # [bs, \sum_{l=0}^{L-1} h_l * w_l, 4]
         output_proposals = output_proposals.masked_fill(~output_proposals_valid, float('inf'))
+        # [bs, \sum_{l=0}^{L-1} h_l * w_l, 4]
 
-        output_memory = memory
+        output_memory = memory  # [bs, \sum_{l=0}^{L-1} h_l * w_l, c]
         output_memory = output_memory.masked_fill(memory_padding_mask.unsqueeze(-1), float(0))
         output_memory = output_memory.masked_fill(~output_proposals_valid, float(0))
         output_memory = self.enc_output_norm(self.enc_output(output_memory))
+        # [bs, \sum_{l=0}^{L-1} h_l * w_l, c]
         return output_memory, output_proposals
 
     def get_valid_ratio(self, mask):
@@ -172,14 +192,21 @@ class DeformableTransformer(nn.Module):
         bs, _, c = memory.shape
         if self.two_stage:
             output_memory, output_proposals = self.gen_encoder_output_proposals(memory, mask_flatten, spatial_shapes)
+            # output_memory: [bs, \sum_{l=0}^{L-1} h_l * w_l, c]
+            # output_proposals: [bs, \sum_{l=0}^{L-1} h_l * w_l, 4]
 
             # hack implementation for two-stage Deformable DETR
             enc_outputs_class = self.decoder.class_embed[self.decoder.num_layers](output_memory)
+            # [bs, \sum_{l=0}^{L-1} h_l * w_l, num_classes]
             enc_outputs_coord_unact = self.decoder.bbox_embed[self.decoder.num_layers](output_memory) + output_proposals
+            # [bs, \sum_{l=0}^{L-1} h_l * w_l, 4]
 
             topk = self.two_stage_num_proposals
             topk_proposals = torch.topk(enc_outputs_class[..., 0], topk, dim=1)[1]
+            # [bs, \sum_{l=0}^{L-1} h_l * w_l, num_classes] --> [bs, \sum_{l=0}^{L-1} h_l * w_l] --> [bs, topk]
+            # torch.topk 函数返回的是值和索引组成的元组，所以[1]表示取了最大值对应的索引 
             topk_coords_unact = torch.gather(enc_outputs_coord_unact, 1, topk_proposals.unsqueeze(-1).repeat(1, 1, 4))
+            # [bs, topk, 4]
             topk_coords_unact = topk_coords_unact.detach()
             reference_points = topk_coords_unact.sigmoid()
             init_reference_out = reference_points
@@ -506,4 +533,4 @@ def build_deforamble_transformer(args):
         enc_n_points=args.enc_n_points,  # 4
         # two_stage 会同时影响 transformer 和 deformableDETR，而 with_box_refine 只影响 deformableDETR
         two_stage=args.two_stage,  # False
-        two_stage_num_proposals=args.num_queries)  # 100
+        two_stage_num_proposals=args.num_queries)  # (330, 100)
