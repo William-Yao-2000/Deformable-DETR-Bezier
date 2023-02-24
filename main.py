@@ -37,8 +37,8 @@ def get_args_parser():
     parser.add_argument('--lr_linear_proj_mult', default=0.1, type=float)
     parser.add_argument('--batch_size', default=1, type=int)  # origin: 2
     parser.add_argument('--weight_decay', default=1e-4, type=float)
-    parser.add_argument('--epochs', default=15, type=int)  # origin: 50
-    parser.add_argument('--lr_drop', default=12, type=int)  # origin: 40
+    parser.add_argument('--epochs', default=16, type=int)  # origin: 50
+    parser.add_argument('--lr_drop', default=14, type=int)  # origin: 40
     parser.add_argument('--lr_drop_epochs', default=None, type=int, nargs='+')
     parser.add_argument('--clip_max_norm', default=0.1, type=float,
                         help='gradient clipping max norm')
