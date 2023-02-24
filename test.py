@@ -1,7 +1,7 @@
-# import torch
+import torch
 # from scipy.optimize import linear_sum_assignment
 # import math
-# import torch.nn.functional as F
+import torch.nn.functional as F
 
 # a = torch.tensor([[2, 2], [3, 5], [9, 10]])
 # print(a.shape)
@@ -239,6 +239,20 @@
 # print(sum(num_queries))
 
 
-mode = 'b'
-xx = 'char' if mode == 'c' else 'bezier'
-print(xx)
+# mode = 'b'
+# xx = 'char' if mode == 'c' else 'bezier'
+# print(xx)
+
+
+tmp = torch.arange(48, dtype=torch.float32).view(2, 3, 8)
+print(tmp)
+tmp_x, tmp_y = torch.mean(tmp[..., 0::2], -1), torch.mean(tmp[..., 1::2], -1)
+print(tmp_x)
+print(tmp_y)
+tmp = torch.stack((tmp_x, tmp_y), -1)
+print(tmp.shape)
+print(tmp)
+
+tmp_cat = torch.cat([tmp]*4, -1)
+print(tmp_cat.shape)
+print(tmp_cat)
