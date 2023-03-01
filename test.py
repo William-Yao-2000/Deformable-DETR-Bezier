@@ -2,6 +2,7 @@ import torch
 # from scipy.optimize import linear_sum_assignment
 # import math
 import torch.nn.functional as F
+import bisect
 
 # a = torch.tensor([[2, 2], [3, 5], [9, 10]])
 # print(a.shape)
@@ -244,15 +245,180 @@ import torch.nn.functional as F
 # print(xx)
 
 
-tmp = torch.arange(48, dtype=torch.float32).view(2, 3, 8)
-print(tmp)
-tmp_x, tmp_y = torch.mean(tmp[..., 0::2], -1), torch.mean(tmp[..., 1::2], -1)
-print(tmp_x)
-print(tmp_y)
-tmp = torch.stack((tmp_x, tmp_y), -1)
-print(tmp.shape)
-print(tmp)
+# tmp = torch.arange(48, dtype=torch.float32).view(2, 3, 8)
+# print(tmp)
+# tmp_x, tmp_y = torch.mean(tmp[..., 0::2], -1), torch.mean(tmp[..., 1::2], -1)
+# print(tmp_x)
+# print(tmp_y)
+# tmp = torch.stack((tmp_x, tmp_y), -1)
+# print(tmp.shape)
+# print(tmp)
 
-tmp_cat = torch.cat([tmp]*4, -1)
-print(tmp_cat.shape)
-print(tmp_cat)
+# tmp_cat = torch.cat([tmp]*4, -1)
+# print(tmp_cat.shape)
+# print(tmp_cat)
+
+
+# a = torch.ones(4, 4)
+# b = torch.randn(4, 1)
+# print(a)
+# print(b)
+# print(a*b)
+
+
+# enc_outputs_class = torch.randn(2, 5, 10)
+# print(enc_outputs_class)
+# topk = 2
+# topk_proposals = torch.topk(enc_outputs_class[..., 0], topk, dim=1)[1]
+
+# topk_class = torch.gather(enc_outputs_class, 1, topk_proposals.unsqueeze(-1).repeat(1, 1, 10))
+# print(topk_class)
+
+
+# grid = torch.randn(2, 3, 4, 2)
+# result = torch.cat([grid]*4, -1).view(2, -1, 8)
+# print(result.shape)
+
+
+# def _get_src_permutation_idx(indices):
+#     # permute predictions following indices
+#     # 将所有的 src 的索引连接在一起，并加上了对应 batch 的下标
+#     batch_idx = torch.cat([torch.full_like(src, i) for i, (src, _) in enumerate(indices)])  # [0,1,1,2,2,3,...]
+#     src_idx = torch.cat([src for (src, _) in indices])  # 将列表中分割的元组连接在一起
+#     return batch_idx, src_idx
+
+# indices = [(torch.tensor([0,1,3]), torch.tensor([2,0,1])),
+#            (torch.tensor([2,0]), torch.tensor([0,1]))]
+# idx = _get_src_permutation_idx(indices)
+# print(idx)
+
+# num_classes = 6  # dataset class range: 1~5
+# num_queries = 4
+# src_logits = torch.randn(2, num_queries, num_classes)
+# print(src_logits.shape)
+# targets = list()
+# targets.append({"char": {"labels": torch.tensor([3,4,5])} })
+# targets.append({"char": {"labels": torch.tensor([1,4])} })
+# target_classes_o = torch.cat([t["char"]["labels"][J] for t, (_, J) in zip(targets, indices)])
+# print(target_classes_o)
+# target_classes = torch.full(src_logits.shape[:2], 0,
+#                             dtype=torch.int64, device=src_logits.device)
+# # [bs, num_queries_c] or [bs, num_queries_b]
+# print(target_classes)
+# # num_classes_c 这个数值应该是对应的空类？ TODO: 好像有问题！
+# target_classes[idx] = target_classes_o
+# print(target_classes)
+
+# target_classes_onehot = torch.zeros([src_logits.shape[0], src_logits.shape[1], src_logits.shape[2] + 1])
+# # [bs, num_queries_c, num_classes_c+1] or [bs, num_queries_b, num_classes_b+1]
+# print("\nNEXT tensors are target_class_onehot:")
+# print(target_classes_onehot)
+# print(target_classes_onehot.shape)
+# target_classes_onehot.scatter_(2, target_classes.unsqueeze(-1), 1)
+# # scatter_ 的有关参考：https://yuyangyy.medium.com/understand-torch-scatter-b0fd6275331c
+# print(target_classes_onehot)
+# print(target_classes_onehot.shape)
+
+# target_classes_onehot = target_classes_onehot[:,:,:-1]  # 背景类为全0
+# # [bs, num_queries_c, num_classes_c] or [bs, num_queries_b, num_classes_b]
+# # 每个batch中每个query预测的结果对应的真实目标类别（以独热编码表示）
+# print(target_classes_onehot)
+# print(target_classes_onehot.shape)
+
+
+"""
+麻了，好像不能并行操作？
+"""
+# bs_range = torch.arange(3)
+# num_boxes_range = torch.arange(5)
+# grid_bs, grid_nb = torch.meshgrid(bs_range, num_boxes_range, indexing='ij')
+# grid_idx = torch.stack((grid_bs, grid_nb), dim=-1)
+# # print(grid_bs)
+# # print(grid_nb)
+# print(grid_idx.shape)
+# # print(grid_idx)
+# torch.manual_seed(1)
+# boxes = torch.rand(3, 5, 4)  # [bs, num_boxes, 4]
+# boxes_with_idx = torch.cat((boxes, grid_idx), dim=-1)
+# print(boxes_with_idx)
+# x1, x2, y1, y2 = boxes.unbind(-1)
+# # print("")
+# print(x1)
+# print(x1.shape)
+# sorted_x1_idx = torch.argsort(x1, dim=-1, descending=False).unsqueeze(-1).expand(-1, -1, boxes_with_idx.shape[2])
+# sorted_x1_idx = torch.LongTensor(sorted_x1_idx)
+# # print("")
+# print(sorted_x1_idx.shape)
+# print(sorted_x1_idx)
+# # new_grid_idx_x1 = torch.cat((grid_idx, sorted_x1_idx), dim=-1)
+# # print(new_grid_idx_x1)
+# # new_boxes_x1 = boxes[new_grid_idx_x1]
+# print(torch.gather(boxes_with_idx, 1, sorted_x1_idx)[..., [0,4,5]])
+# # print(torch.gather(boxes_with_idx, 1, sorted_x1_idx))
+# x = 0.5
+# print(bisect.bisect_left)  # 呜呜呜
+
+
+# boxes_idx = torch.arange(5).unsqueeze(-1)
+# torch.manual_seed(1)
+# boxes, _ = torch.rand(5, 4).sort(-1)  # [num_boxes, 4]
+# boxes = torch.tensor(boxes, dtype=torch.float32)
+# boxes_with_idx = torch.cat((boxes, boxes_idx), dim=-1)
+# print(boxes_with_idx)
+# x1, y1, x2, y2 = boxes.unbind(-1)
+# # print("")
+# print(x1)
+# print(x1.shape)
+# sorted_boxes_lst = []
+# for i, coord in enumerate((x1, y1, x2, y2)):
+#     sorted_coord_idx = torch.argsort(coord, dim=-1, descending=False).unsqueeze(-1).expand(-1, 5)
+#     # [bs, num_boxes, 5]
+#     sorted_coord_idx = torch.LongTensor(sorted_coord_idx)
+#     sorted_boxes_with_idx = torch.gather(boxes_with_idx, 0, sorted_coord_idx)[..., [i,4]].numpy()
+#     # [bs, num_boxes, 2]
+#     sorted_boxes_lst.append(sorted_boxes_with_idx)
+
+# for arr in sorted_boxes_lst:
+#     print(arr, "\n")
+
+# x, y = 0.5, 0.7
+# valid_boxes = set()
+# valid_boxes_subset = set()
+# result_1_range = range(bisect.bisect_left(sorted_boxes_lst[0][:, 0], x))
+# result_1 = [int(sorted_boxes_lst[0][k][1]) for k in result_1_range]
+# result_1 = set(result_1)
+# print(result_1)
+
+# result_2_range = range(bisect.bisect_left(sorted_boxes_lst[1][:, 0], y))
+# result_2 = [int(sorted_boxes_lst[1][k][1]) for k in result_2_range]
+# result_2 = set(result_2)
+# print(result_2)
+
+# result_3_range = range(bisect.bisect_right(sorted_boxes_lst[2][:, 0], x), boxes.shape[0])
+# result_3 = [int(sorted_boxes_lst[2][k][1]) for k in result_3_range]
+# result_3 = set(result_3)
+# print(result_3)
+
+# result_4_range = range(bisect.bisect_right(sorted_boxes_lst[3][:, 0], y), boxes.shape[0])
+# result_4 = [int(sorted_boxes_lst[3][k][1]) for k in result_4_range]
+# result_4 = set(result_4)
+# print(result_4)
+
+# res = result_1 & result_2 & result_3 & result_4
+# print(res, "\n\n")
+
+# num_boxes = boxes.shape[0]
+# res = set(range(num_boxes))
+# for i, arr in enumerate(sorted_boxes_lst):
+#     c = x if i % 2 == 0 else y
+#     result_i_range = range(bisect.bisect_left(arr[:, 0], c)) if i < 2 else \
+#         range(bisect.bisect_right(arr[:, 0], c), num_boxes)
+#     result_i = [int(arr[k][1]) for k in result_i_range]
+#     result_i = set(result_i)
+#     print(result_i)
+#     res &= result_i
+
+# print(res)
+# for b in res:
+#     print(b)
+#     break
