@@ -1,6 +1,6 @@
 *.jpg
 *.png
 /data
-/tmp-transform-test
+/tmp_transform_test
 /log
 /vis/*.svg
