@@ -35,8 +35,8 @@ def get_args_parser():
     parser.add_argument('--lr_linear_proj_mult', default=0.1, type=float)
     parser.add_argument('--batch_size', default=1, type=int)  # origin: 2
     parser.add_argument('--weight_decay', default=1e-4, type=float)
-    parser.add_argument('--epochs', default=12, type=int)  # origin: 50
-    parser.add_argument('--lr_drop', default=8, type=int)  # origin: 40
+    parser.add_argument('--epochs', default=16, type=int)  # origin: 50
+    parser.add_argument('--lr_drop', default=14, type=int)  # origin: 40
     parser.add_argument('--lr_drop_epochs', default=None, type=int, nargs='+')
     parser.add_argument('--clip_max_norm', default=0.1, type=float,
                         help='gradient clipping max norm')
@@ -76,7 +76,7 @@ def get_args_parser():
                         help="Dropout applied in the transformer")
     parser.add_argument('--nheads', default=8, type=int,
                         help="Number of attention heads inside the transformer's attentions")
-    parser.add_argument('--num_queries', default=330, type=int,
+    parser.add_argument('--num_queries', default=(330, 100), type=tuple,
                         help="Number of query slots")  # origin: 300
     parser.add_argument('--dec_n_points', default=4, type=int)
     parser.add_argument('--enc_n_points', default=4, type=int)
@@ -91,24 +91,33 @@ def get_args_parser():
                         help="Disables auxiliary decoding losses (loss at each layer)")
 
     # * Matcher
-    parser.add_argument('--set_cost_class', default=2, type=float,
-                        help="Class coefficient in the matching cost")
+    parser.add_argument('--set_cost_class_c', default=2, type=float,
+                        help="Character class coefficient in the matching cost")
     parser.add_argument('--set_cost_bbox', default=5, type=float,
                         help="L1 box coefficient in the matching cost")
     parser.add_argument('--set_cost_giou', default=2, type=float,
                         help="giou box coefficient in the matching cost")
 
+    parser.add_argument('--set_cost_class_b', default=2, type=float,
+                        help="Bezier curve class coefficient in the matching cost")
+    parser.add_argument('--set_cost_point', default=5, type=float,
+                        help="L2 point coefficient in the matching cost")
+
     # * Loss coefficients
     # 各项损失的权重
     parser.add_argument('--mask_loss_coef', default=1, type=float)
     parser.add_argument('--dice_loss_coef', default=1, type=float)
-    parser.add_argument('--cls_loss_coef', default=2, type=float)
+    parser.add_argument('--cls_c_loss_coef', default=2, type=float)
     parser.add_argument('--bbox_loss_coef', default=5, type=float)
     parser.add_argument('--giou_loss_coef', default=2, type=float)
+
+    parser.add_argument('--cls_b_loss_coef', default=2, type=float)
+    parser.add_argument('--point_loss_coef', default=5, type=float)
+
     parser.add_argument('--focal_alpha', default=0.25, type=float)
 
     # dataset parameters
-    parser.add_argument('--dataset_file', default='coco')
+    parser.add_argument('--dataset_file', default='synthtext', choices=('coco', 'coco_panoptic', 'synthtext'))
     parser.add_argument('--coco_path', default='./data/coco', type=str)
     parser.add_argument('--coco_panoptic_path', type=str)
     parser.add_argument('--remove_difficult', action='store_true')
@@ -195,6 +204,7 @@ def main(args):
 
     for n, p in model_without_ddp.named_parameters():
         print(n)
+    print("\n\n")
 
     param_dicts = [
         {
