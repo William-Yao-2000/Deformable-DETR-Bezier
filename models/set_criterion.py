@@ -84,7 +84,6 @@ class SetCriterionPart(nn.Module):
         """
         idx = _get_src_permutation_idx(indices_x)
 
-        # TODO: 代码可以缩减修改
         xx = 'char' if self.mode == 'c' else 'bezier'
 
         assert 'pred_logits' in outputs[xx]
@@ -114,6 +113,7 @@ class SetCriterionPart(nn.Module):
 
         if log:
             # TODO this should probably be a separate loss, not hacked in this one here
+            # accuracy 函数已经用 @torch.no_grad() 装饰了
             losses['class_error'] = 100 - accuracy(src_logits[idx], target_classes_o)[0]
         return losses
 
@@ -125,6 +125,7 @@ class SetCriterionPart(nn.Module):
         xx = 'char' if self.mode == 'c' else 'bezier'
 
         pred_logits = outputs[xx]['pred_logits']
+        # [bs, num_queries_c, num_classes_c] or [bs, num_queries_b, num_classes_b]
         device = pred_logits.device
         tgt_lengths = torch.as_tensor([len(v[xx]["labels"]) for v in targets], device=device)
 
@@ -271,12 +272,13 @@ class SetCriterionPart(nn.Module):
                     losses_x.update(l_dict)
 
         # TODO: 还需要修改
-        if 'enc_outputs' in outputs:
-            enc_outputs = outputs['enc_outputs']
+        if 'enc_outputs' in outputs[xx]:
+            enc_outputs = {xx: outputs[xx]['enc_outputs']}
             bin_targets = copy.deepcopy(targets)
+            # bin_targets = [{xx: copy.deepcopy(tgt[xx])} for tgt in targets]
             for bt in bin_targets:
-                bt['labels'] = torch.zeros_like(bt['labels'])
-            indices_c = self.matcher(enc_outputs, bin_targets)
+                bt[xx]['labels'] = torch.zeros_like(bt[xx]['labels'])
+            indices_x = self.matcher_x(enc_outputs, bin_targets)
             for loss in self.losses_x:
                 if loss == 'masks':
                     # Intermediate masks losses are too costly to compute, we ignore them.
@@ -285,7 +287,7 @@ class SetCriterionPart(nn.Module):
                 if loss == 'labels':
                     # Logging is enabled only for the last layer
                     kwargs['log'] = False
-                l_dict = self.get_loss(loss, enc_outputs, bin_targets, indices_c, num_xx, **kwargs)
+                l_dict = self.get_loss(loss, enc_outputs, bin_targets, indices_x, num_xx, **kwargs)
                 l_dict = {k + f'_enc': v for k, v in l_dict.items()}
                 losses_x.update(l_dict)
 
