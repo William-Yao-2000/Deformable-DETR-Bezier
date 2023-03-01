@@ -120,15 +120,14 @@ class DeformableDETR(nn.Module):
         # TODO: box refine 和 two-stage 的内容还没看
         if with_box_refine:
             # 深复制
-            # TODO: bezier curve 的部分还没加上去
             self.class_embed_c = _get_clones(self.class_embed_c, num_pred_c)
             self.bbox_embed = _get_clones(self.bbox_embed, num_pred_c)
             nn.init.constant_(self.bbox_embed[0].layers[-1].bias.data[2:], -2.0)
             # hack implementation for iterative bounding box refinement
             self.transformer.decoder_c.bbox_embed = self.bbox_embed
 
-            self.class_embed_b = _get_clones(self.class_embed_b, num_pred_c)
-            self.point_embed = _get_clones(self.point_embed, num_pred_c)
+            self.class_embed_b = _get_clones(self.class_embed_b, num_pred_b)
+            self.point_embed = _get_clones(self.point_embed, num_pred_b)
             # hack implementation for iterative bounding box refinement
             self.transformer.decoder_b.point_embed = self.point_embed
         else:
@@ -143,8 +142,8 @@ class DeformableDETR(nn.Module):
             self.transformer.decoder_c.bbox_embed = None
         if two_stage:
             # hack implementation for two-stage
-            # TODO: bezier curve 的部分还没加上去
-            self.transformer.decoder.class_embed = self.class_embed
+            self.transformer.decoder_c.class_embed_c = self.class_embed_c
+            self.transformer.decoder_b.class_embed_b = self.class_embed_b
             for box_embed in self.bbox_embed:
                 nn.init.constant_(box_embed.layers[-1].bias.data[2:], 0.0)
 
@@ -201,11 +200,12 @@ class DeformableDETR(nn.Module):
                 # pos[l]: [bs, d_model, h_l, w_l]
 
         # transformer (encoder + decoder)
-        query_embeds_c, query_embeds_b = None, None
+        query_embeds = None
         if not self.two_stage:
             query_embeds_c = self.query_embed_c.weight
             query_embeds_b = self.query_embed_b.weight
             query_embeds = {"c": query_embeds_c, "b": query_embeds_b}
+
         hs, init_reference, inter_references, enc_outputs_class, enc_outputs_coord_unact = \
             self.transformer(srcs, masks, pos, query_embeds)
 
@@ -266,8 +266,12 @@ class DeformableDETR(nn.Module):
             pass
 
         if self.two_stage:
-            enc_outputs_coord = enc_outputs_coord_unact.sigmoid()
-            out['enc_outputs'] = {'pred_logits': enc_outputs_class, 'pred_boxes': enc_outputs_coord}
+            # activation
+            enc_outputs_coord_c = enc_outputs_coord_unact["c"].sigmoid()
+            enc_outputs_coord_b = enc_outputs_coord_unact["b"].sigmoid()
+            # TODO: enc_outputs_class 应该怎么办呢？是保留原有的所有输出，还是说只保留topk的输出？
+            out['char']['enc_outputs'] = {'pred_logits': enc_outputs_class["c"], 'pred_boxes': enc_outputs_coord_c}
+            out['bezier']['enc_outputs'] = {'pred_logits': enc_outputs_class["b"], 'pred_points': enc_outputs_coord_b}
         return out  # a dictionary
 
     @torch.jit.unused
@@ -301,8 +305,8 @@ class PostProcess(nn.Module):
 
         prob = out_logits.sigmoid()
         # 取每个 batch 的所有 queries 在所有类上预测结果最高的 100 个值
-        # TODO: 根据 synthtext 的特点，改成 322！！！
-        topk_values, topk_indexes = torch.topk(prob.view(out_logits.shape[0], -1), 322, dim=1)  # [bs, 322]
+        # TODO: 根据 synthtext 的特点，改成 300！！！
+        topk_values, topk_indexes = torch.topk(prob.view(out_logits.shape[0], -1), 300, dim=1)  # [bs, 300]
         scores = topk_values
         topk_boxes = topk_indexes // out_logits.shape[2]
         labels = topk_indexes % out_logits.shape[2]
@@ -374,17 +378,18 @@ def build(args):
         weight_dict["c"]["loss_dice"] = args.dice_loss_coef
     weight_dict["b"] = {'loss_ce': args.cls_b_loss_coef,
                         'loss_point': args.point_loss_coef}
+    origin_weight_dict = copy.deepcopy(weight_dict)
     # TODO this is a hack
     if args.aux_loss:
         aux_weight_dict_c, aux_weight_dict_b = {}, {}
         for i in range(args.dec_layers - 1):  # TODO: 以后两个decoder可能层数不一样，注意就是了
-            aux_weight_dict_c.update({k + f'_{i}': v for k, v in weight_dict["c"].items()})
-            aux_weight_dict_b.update({k + f'_{i}': v for k, v in weight_dict["b"].items()})
+            aux_weight_dict_c.update({k + f'_{i}': v for k, v in origin_weight_dict["c"].items()})
+            aux_weight_dict_b.update({k + f'_{i}': v for k, v in origin_weight_dict["b"].items()})
         weight_dict["c"].update(aux_weight_dict_c)
         weight_dict["b"].update(aux_weight_dict_b)
     if args.two_stage:
-        weight_dict["c"].update({k + f'_enc': v for k, v in weight_dict["c"].items()})
-        weight_dict["b"].update({k + f'_enc': v for k, v in weight_dict["b"].items()})
+        weight_dict["c"].update({k + f'_enc': v for k, v in origin_weight_dict["c"].items()})
+        weight_dict["b"].update({k + f'_enc': v for k, v in origin_weight_dict["b"].items()})
 
     # losses
     losses = {"c": [], "b": []}

@@ -25,7 +25,7 @@ class DeformableTransformer(nn.Module):
                  num_encoder_layers=6, num_decoder_layers=6, dim_feedforward=1024, dropout=0.1,
                  activation="relu", return_intermediate_dec=False,
                  num_feature_levels=4, dec_n_points=4, enc_n_points=4,
-                 two_stage=False, two_stage_num_proposals=300):
+                 two_stage=False, two_stage_num_proposals=(330, 100)):
         super().__init__()
 
         self.d_model = d_model
@@ -47,10 +47,15 @@ class DeformableTransformer(nn.Module):
         self.level_embed = nn.Parameter(torch.Tensor(num_feature_levels, d_model))  # 层级编码
 
         if two_stage:
-            self.enc_output = nn.Linear(d_model, d_model)
-            self.enc_output_norm = nn.LayerNorm(d_model)
-            self.pos_trans = nn.Linear(d_model * 2, d_model * 2)
-            self.pos_trans_norm = nn.LayerNorm(d_model * 2)
+            self.enc_output_c = nn.Linear(d_model, d_model)
+            self.enc_output_norm_c = nn.LayerNorm(d_model)
+            self.pos_trans_c = nn.Linear(d_model * 2, d_model * 2)
+            self.pos_trans_norm_c = nn.LayerNorm(d_model * 2)
+
+            self.enc_output_b = nn.Linear(d_model, d_model)
+            self.enc_output_norm_b = nn.LayerNorm(d_model)
+            self.pos_trans_b = nn.Linear(d_model * 4, d_model * 2)  # 是4不是2！
+            self.pos_trans_norm_b = nn.LayerNorm(d_model * 2)
         else:
             self.reference_points_c = nn.Linear(d_model, 2)
             self.reference_points_b = nn.Linear(d_model, 2)
@@ -75,7 +80,7 @@ class DeformableTransformer(nn.Module):
     def get_proposal_pos_embed(self, proposals):
         """
         Args:
-            proposals: [bs, topk, 4]
+            proposals: [bs, num_queries_c, 4] or [bs, num_queries_b, 8]
         """
         num_pos_feats = 128
         temperature = 10000
@@ -83,29 +88,39 @@ class DeformableTransformer(nn.Module):
 
         dim_t = torch.arange(num_pos_feats, dtype=torch.float32, device=proposals.device)  # [num_pos_feats,]
         dim_t = temperature ** (2 * (dim_t // 2) / num_pos_feats)  # [num_pos_feats,]
-        proposals = proposals.sigmoid() * scale  # [bs, topk, 4]
-        pos = proposals[:, :, :, None] / dim_t  # [bs, topk, 4, 128]
+        proposals = proposals.sigmoid() * scale  # [bs, num_queries_c, 4] or [bs, num_queries_b, 8]
+        pos = proposals[:, :, :, None] / dim_t
+        # [bs, num_queries_c, 4, num_pos_feats] or [bs, num_queries_b, 8, num_pos_feats]
         pos = torch.stack((pos[:, :, :, 0::2].sin(), pos[:, :, :, 1::2].cos()), dim=4).flatten(2)
-        # [bs, topk, 4, 64, 2] --> [bs, topk, 4*64*2]
+        # [bs, num_queries_c, 4, num_pos_feats//2, 2] --> [bs, num_queries_c, num_pos_feats*4] or
+        # [bs, num_queries_b, 8, num_pos_feats//2, 2] --> [bs, num_queries_b, num_pos_feats*8]
         return pos
 
     def gen_encoder_output_proposals(self, memory, memory_padding_mask, spatial_shapes):
-        """
+        """获取线性投影后的memory及初始化的proposal
+
         Args:
             memory: [bs, \sum_{l=0}^{L-1} h_l * w_l, c]
             memory_padding_mask: [bs, \sum_{l=0}^{L-1} h_l * w_l]
             spatial_shapes: [L, 2]
 
         Returns:
-            output_memory: 经过线性投射和归一化的memory，[bs, \sum_{l=0}^{L-1} h_l * w_l, c]
-            output_proposals: 每个sample的每个位置的特征对应的初始化的proposal，[bs, \sum_{l=0}^{L-1} h_l * w_l, 4]
+            output_memory: 经过线性投射和归一化的（字符或Bezier曲线）的memory。
+                           包含的key: "c", "b"
+                "c": [bs, \sum_{l=0}^{L-1} h_l * w_l, c]    c == d_model
+                "b": [bs, \sum_{l=0}^{L-1} h_l * w_l, c]
+            output_proposals: 每个sample的每个位置的特征对应的初始化的（字符或Bezier曲线）proposal。
+                              包含的key: "c", "b"
+                "c": [bs, \sum_{l=0}^{L-1} h_l * w_l, 4]
+                "b": [bs, \sum_{l=0}^{L-1} h_l * w_l, 8]
         """
         N_, S_, C_ = memory.shape
         base_scale = 4.0
-        proposals = []
+        proposals_c, proposals_b = [], []
         _cur = 0
         for lvl, (H_, W_) in enumerate(spatial_shapes):
-            mask_flatten_ = memory_padding_mask[:, _cur:(_cur + H_ * W_)].view(N_, H_, W_, 1)  # [bs, h_l, w_l, 1]
+            mask_flatten_ = memory_padding_mask[:, _cur:(_cur + H_ * W_)].view(N_, H_, W_, 1)
+            # [bs, h_l * w_l] --> [bs, h_l, w_l, 1]
             valid_H = torch.sum(~mask_flatten_[:, :, 0, 0], 1)  # [bs,]
             valid_W = torch.sum(~mask_flatten_[:, 0, :, 0], 1)  # [bs,]
 
@@ -119,24 +134,49 @@ class DeformableTransformer(nn.Module):
             grid = (grid.unsqueeze(0).expand(N_, -1, -1, -1) + 0.5) / scale  # 归一化，[bs, h_l, w_l, 2]
             wh = torch.ones_like(grid) * 0.05 * (2.0 ** lvl)  # [bs, h_l, w_l, 2]
             # 对应原始图片的宽高（不同层次的特征对应不同大小的初始候选框）
-            proposal = torch.cat((grid, wh), -1).view(N_, -1, 4)  # [bs, h_l * w_l, 4]
-            proposals.append(proposal)
+
+            proposal_c = torch.cat((grid, wh), -1).view(N_, -1, 4)
+            # [bs, h_l, w_l, 4] --> [bs, h_l * w_l, 4]
+            proposals_c.append(proposal_c)
+            proposal_b = torch.cat([grid]*4, -1).view(N_, -1, 8)
+            # [bs, h_l, w_l, 8] --> [bs, h_l * w_l, 8]
+            proposals_b.append(proposal_b)
             _cur += (H_ * W_)
-        output_proposals = torch.cat(proposals, 1)  # [bs, \sum_{l=0}^{L-1} h_l * w_l, 4]
-        output_proposals_valid = ((output_proposals > 0.01) & (output_proposals < 0.99)).all(-1, keepdim=True)
+        # output_proposals = {}
+        output_proposals_c = torch.cat(proposals_c, 1)  # [bs, \sum_{l=0}^{L-1} h_l * w_l, 4]
         # 舍弃靠近边界的点
-        output_proposals = torch.log(output_proposals / (1 - output_proposals))  # [bs, \sum_{l=0}^{L-1} h_l * w_l, 4]
+        output_proposals_valid_c = ((output_proposals_c > 0.01) & (output_proposals_c < 0.99)).all(-1, keepdim=True)
         # 编码，这是sigmoid函数的反函数
-        output_proposals = output_proposals.masked_fill(memory_padding_mask.unsqueeze(-1), float('inf'))
+        output_proposals_c = torch.log(output_proposals_c / (1 - output_proposals_c))  # [bs, \sum_{l=0}^{L-1} h_l * w_l, 4]
+        output_proposals_c = output_proposals_c.masked_fill(memory_padding_mask.unsqueeze(-1), float('inf'))
         # [bs, \sum_{l=0}^{L-1} h_l * w_l, 4]
-        output_proposals = output_proposals.masked_fill(~output_proposals_valid, float('inf'))
+        output_proposals_c = output_proposals_c.masked_fill(~output_proposals_valid_c, float('inf'))
         # [bs, \sum_{l=0}^{L-1} h_l * w_l, 4]
 
-        output_memory = memory  # [bs, \sum_{l=0}^{L-1} h_l * w_l, c]
-        output_memory = output_memory.masked_fill(memory_padding_mask.unsqueeze(-1), float(0))
-        output_memory = output_memory.masked_fill(~output_proposals_valid, float(0))
-        output_memory = self.enc_output_norm(self.enc_output(output_memory))
+        output_proposals_b = torch.cat(proposals_b, 1)  # [bs, \sum_{l=0}^{L-1} h_l * w_l, 8]
+        output_proposals_valid_b = ((output_proposals_b > 0.01) & (output_proposals_b < 0.99)).all(-1, keepdim=True)
+        output_proposals_b = torch.log(output_proposals_b / (1 - output_proposals_b))  # [bs, \sum_{l=0}^{L-1} h_l * w_l, 8]
+        output_proposals_b = output_proposals_b.masked_fill(memory_padding_mask.unsqueeze(-1), float('inf'))
+        # [bs, \sum_{l=0}^{L-1} h_l * w_l, 8]
+        output_proposals_b = output_proposals_b.masked_fill(~output_proposals_valid_b, float('inf'))
+        # [bs, \sum_{l=0}^{L-1} h_l * w_l, 8]
+
+        output_proposals = {"c": output_proposals_c, "b": output_proposals_b}
+
+        output_memory_c, output_memory_b = memory, memory  # [bs, \sum_{l=0}^{L-1} h_l * w_l, c]
+        
+        output_memory_c = output_memory_c.masked_fill(memory_padding_mask.unsqueeze(-1), float(0))
+        output_memory_c = output_memory_c.masked_fill(~output_proposals_valid_c, float(0))
+        output_memory_c = self.enc_output_norm_c(self.enc_output_c(output_memory_c))
         # [bs, \sum_{l=0}^{L-1} h_l * w_l, c]
+
+        output_memory_b = output_memory_b.masked_fill(memory_padding_mask.unsqueeze(-1), float(0))
+        output_memory_b = output_memory_b.masked_fill(~output_proposals_valid_b, float(0))
+        output_memory_b = self.enc_output_norm_b(self.enc_output_b(output_memory_b))
+        # [bs, \sum_{l=0}^{L-1} h_l * w_l, c]
+
+        output_memory = {"c": output_memory_c, "b": output_memory_b}
+        
         return output_memory, output_proposals
 
     def get_valid_ratio(self, mask):
@@ -192,26 +232,46 @@ class DeformableTransformer(nn.Module):
         bs, _, c = memory.shape
         if self.two_stage:
             output_memory, output_proposals = self.gen_encoder_output_proposals(memory, mask_flatten, spatial_shapes)
-            # output_memory: [bs, \sum_{l=0}^{L-1} h_l * w_l, c]
-            # output_proposals: [bs, \sum_{l=0}^{L-1} h_l * w_l, 4]
 
             # hack implementation for two-stage Deformable DETR
-            enc_outputs_class = self.decoder.class_embed[self.decoder.num_layers](output_memory)
-            # [bs, \sum_{l=0}^{L-1} h_l * w_l, num_classes]
-            enc_outputs_coord_unact = self.decoder.bbox_embed[self.decoder.num_layers](output_memory) + output_proposals
+            enc_outputs_class_c = self.decoder_c.class_embed_c[self.decoder_c.num_layers](output_memory["c"])
+            # [bs, \sum_{l=0}^{L-1} h_l * w_l, num_classes_c]
+            enc_outputs_coord_unact_c = self.decoder_c.bbox_embed[self.decoder_c.num_layers](output_memory["c"]) + output_proposals["c"]
             # [bs, \sum_{l=0}^{L-1} h_l * w_l, 4]
+            enc_outputs_class_b = self.decoder_b.class_embed_b[self.decoder_b.num_layers](output_memory["b"])
+            # [bs, \sum_{l=0}^{L-1} h_l * w_l, num_classes_b]
+            enc_outputs_coord_unact_b = self.decoder_b.point_embed[self.decoder_b.num_layers](output_memory["b"]) + output_proposals["b"]
+            # [bs, \sum_{l=0}^{L-1} h_l * w_l, 8]
 
-            topk = self.two_stage_num_proposals
-            topk_proposals = torch.topk(enc_outputs_class[..., 0], topk, dim=1)[1]
-            # [bs, \sum_{l=0}^{L-1} h_l * w_l, num_classes] --> [bs, \sum_{l=0}^{L-1} h_l * w_l] --> [bs, topk]
+            topk_c, topk_b = self.two_stage_num_proposals
+            topk_proposals_c = torch.topk(enc_outputs_class_c[..., 0], topk_c, dim=1)[1]  # TODO: 这里究竟是为什么呢
+            # [bs, \sum_{l=0}^{L-1} h_l * w_l, num_classes_c] --> [bs, \sum_{l=0}^{L-1} h_l * w_l] --> [bs, num_queries_c]
+            # topk_c == num_queries_c
             # torch.topk 函数返回的是值和索引组成的元组，所以[1]表示取了最大值对应的索引 
-            topk_coords_unact = torch.gather(enc_outputs_coord_unact, 1, topk_proposals.unsqueeze(-1).repeat(1, 1, 4))
-            # [bs, topk, 4]
-            topk_coords_unact = topk_coords_unact.detach()
-            reference_points = topk_coords_unact.sigmoid()
-            init_reference_out = reference_points
-            pos_trans_out = self.pos_trans_norm(self.pos_trans(self.get_proposal_pos_embed(topk_coords_unact)))
-            query_embed, tgt = torch.split(pos_trans_out, c, dim=2)
+            
+            topk_coords_unact_c = torch.gather(enc_outputs_coord_unact_c, 1, topk_proposals_c.unsqueeze(-1).repeat(1, 1, 4))
+            # [bs, num_queries_c, 4]
+            topk_coords_unact_c = topk_coords_unact_c.detach()
+            reference_points_c = topk_coords_unact_c.sigmoid()
+            init_reference_out_c = reference_points_c
+
+            topk_proposals_b = torch.topk(enc_outputs_class_b[..., 0], topk_b, dim=1)[1]
+            # [bs, \sum_{l=0}^{L-1} h_l * w_l, num_classes_b] --> [bs, \sum_{l=0}^{L-1} h_l * w_l] --> [bs, num_queries_b]
+            topk_coords_unact_b = torch.gather(enc_outputs_coord_unact_b, 1, topk_proposals_b.unsqueeze(-1).repeat(1, 1, 8))
+            # [bs, num_queries_b, 8]
+            topk_coords_unact_b = topk_coords_unact_b.detach()
+            tcub_x, tcub_y = torch.mean(topk_coords_unact_b[..., 0::2], -1), torch.mean(topk_coords_unact_b[..., 1::2], -1)
+            reference_points_b = torch.stack((tcub_x, tcub_y), -1)  # [bs, num_queries_b, 2]
+            reference_points_b = reference_points_b.sigmoid()
+            init_reference_out_b = reference_points_b
+
+            pos_trans_out_c = self.pos_trans_norm_c(self.pos_trans_c(self.get_proposal_pos_embed(topk_coords_unact_c)))
+            query_embed_c, tgt_c = torch.split(pos_trans_out_c, c, dim=2)
+            pos_trans_out_b = self.pos_trans_norm_b(self.pos_trans_b(self.get_proposal_pos_embed(topk_coords_unact_b)))
+            query_embed_b, tgt_b = torch.split(pos_trans_out_b, c, dim=2)
+
+            enc_outputs_class = {"c": enc_outputs_class_c, "b": enc_outputs_class_b}
+            enc_outputs_coord_unact = {"c": enc_outputs_coord_unact_c, "b": enc_outputs_coord_unact_b}
         else:
             # 切分前：
             # query_embed["c"]: [num_queries_c, d_model*2]
@@ -485,7 +545,7 @@ class DeformableTransformerDecoder(nn.Module):
                 reference_points = new_reference_points.detach()
             elif self.point_embed is not None:
                 assert reference_points.shape[-1] == 2
-                tmp = self.point_embed[lid](output)
+                tmp = self.point_embed[lid](output)  # [bs, num_queries_b, 8]
                 tmp_x, tmp_y = torch.mean(tmp[..., 0::2], -1), torch.mean(tmp[..., 1::2], -1)
                 tmp = torch.stack((tmp_x, tmp_y), -1)
                 new_reference_points = tmp + inverse_sigmoid(reference_points)
