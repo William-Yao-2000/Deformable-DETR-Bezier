@@ -361,6 +361,7 @@ def inference(model, img_path, device, transforms, num2char, model_ver):
     
     output = model(img)
     out_logits_c, out_bbox = output['char']['pred_logits'], output['char']['pred_boxes']
+    # [bs, num_queries_c, num_classes_c], [bs, num_queries_c, 4]
     print('\nchar output shape:')
     print('pred_logits:', out_logits_c.shape)
     print('pred_boxes:', out_bbox.shape)
@@ -368,7 +369,8 @@ def inference(model, img_path, device, transforms, num2char, model_ver):
     # post process
     prob_c = out_logits_c.sigmoid()
     # TODO: 现在感觉最麻烦的就是这个地方了
-    topk_values_c, topk_indexes_c = torch.topk(prob_c.view(out_logits_c.shape[0], -1), 100, dim=1)  # [bs, 20]
+    topk_values_c, topk_indexes_c = torch.topk(prob_c.view(out_logits_c.shape[0], -1), 300, dim=1)  # [bs, 300]
+    # [bs, 300]
     scores_c = topk_values_c
     print('scores shape:', scores_c.shape)
     topk_boxes = topk_indexes_c // out_logits_c.shape[2]
@@ -377,6 +379,7 @@ def inference(model, img_path, device, transforms, num2char, model_ver):
     print(labels_c)
     boxes = box_ops.box_cxcywh_to_xyxy(out_bbox)
     boxes = torch.gather(boxes, 1, topk_boxes.unsqueeze(-1).repeat(1,1,4))  # 根据索引来取得对应结果
+    # [bs, 300, 4]
     # print(boxes)
     threshold = 0.3
     
