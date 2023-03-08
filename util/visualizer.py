@@ -59,7 +59,8 @@ class COCOVisualizer():
     def __init__(self) -> None:
         pass
 
-    def visualize(self, img_path, img, tgt_c, tgt_b, caption=None, dpi=120, savedir=None, show_in_console=True):
+    def visualize(self, img_path, img, tgt_c, tgt_b, tgt_p, res_lst,
+                  caption=None, dpi=120, savedir=None, show_in_console=True):
         """
         img: tensor(3, H, W)
         tgt: make sure they are all on cpu.
@@ -73,9 +74,9 @@ class COCOVisualizer():
         #     import ipdb; ipdb.set_trace()
         ax.imshow(img)
         
-        self.addtgt_c(tgt_c)
-        # TODO: 加上 addtgt_b
+        # self.addtgt_c(tgt_c, res_lst)
         self.addtgt_b(tgt_b)
+        self.addtgt_p(tgt_p)
         if show_in_console:
             plt.show()
 
@@ -94,7 +95,7 @@ class COCOVisualizer():
             plt.savefig(savename)
         plt.close()
 
-    def addtgt_c(self, tgt):
+    def addtgt_c(self, tgt, res_lst):
         """
         - tgt: dict. args:
             - boxes: num_boxes, 4. xywh, [0,1].
@@ -105,7 +106,12 @@ class COCOVisualizer():
         H, W = tgt['size'].tolist() 
         numbox = tgt['boxes'].shape[0]
 
-        color = []
+        color_pool = [(np.random.random((1, 3))*0.6+0.4).tolist()[0] for _ in range(len(res_lst))]
+        color = [(np.random.random((1, 3))*0.6+0.4).tolist()[0] for _ in range(numbox)]
+        for i, lst in enumerate(res_lst):
+            for k in lst:
+                color[k] = color_pool[i]
+        
         polygons = []
         boxes = []
         for box in tgt['boxes'].cpu():
@@ -116,8 +122,8 @@ class COCOVisualizer():
             poly = [[bbox_x, bbox_y], [bbox_x, bbox_y+bbox_h], [bbox_x+bbox_w, bbox_y+bbox_h], [bbox_x+bbox_w, bbox_y]]
             np_poly = np.array(poly).reshape((4,2))
             polygons.append(Polygon(np_poly))
-            c = (np.random.random((1, 3))*0.6+0.4).tolist()[0]
-            color.append(c)
+            # c = (np.random.random((1, 3))*0.6+0.4).tolist()[0]
+            # color.append(c)
 
         p = PatchCollection(polygons, facecolor=color, linewidths=0, alpha=0.1)
         ax.add_collection(p)
@@ -136,7 +142,6 @@ class COCOVisualizer():
         if 'caption' in tgt:
             ax.set_title(tgt['caption'], wrap=True)
     
-
     def addtgt_b(self, tgt):
         """
         - tgt: dict. args:
@@ -148,8 +153,6 @@ class COCOVisualizer():
         H, W = tgt['size'].tolist() 
         numcurve = tgt['curves'].shape[0]
 
-        color = []
-        curves = []
         for curve in tgt['curves'].cpu():
             unnormcurve = curve * torch.Tensor([W, H]*4)
             [x1, y1, x2, y2, x3, y3, x4, y4] = unnormcurve.tolist()
@@ -158,4 +161,34 @@ class COCOVisualizer():
             for x, y in points:
                 ax.scatter(x, y, s=3, c=np.array(c).reshape(1, -1))
         
+    def addtgt_p(self, tgt):
+        assert 'polygons' in tgt
+        ax = plt.gca()
+        numpoly = tgt['polygons'].shape[0]
 
+        colors = []
+        polygons = []
+        for polygon in tgt['polygons'].cpu():
+            # polygon: [n*2, 2]
+            unnormpoly = polygon
+            x_lst = unnormpoly[:, 0].tolist()
+            y_lst = unnormpoly[:, 1].tolist()
+            assert len(x_lst) == len(y_lst)
+            poly = [[x, y] for (x, y) in zip(x_lst, y_lst)]
+            np_poly = np.array(poly).reshape((-1,2))
+            polygons.append(Polygon(np_poly))
+            c = (np.random.random((1, 3))*0.6+0.4).tolist()[0]
+            colors.append(c)
+
+        p = PatchCollection(polygons, facecolor=colors, linewidths=0, alpha=0.1)
+        ax.add_collection(p)
+        p = PatchCollection(polygons, facecolor='none', edgecolors=colors, linewidths=0.5)
+        ax.add_collection(p)
+
+        if 'poly_label' in tgt:
+            assert len(tgt['poly_label']) == numpoly, f"{len(tgt['poly_label'])} = {numpoly}, "
+            for idx, bl in enumerate(tgt['poly_label']):
+                _string = str(bl)
+                _poly = tgt['polygons'][idx]
+                start_x, start_y = _poly[0][0].item(), _poly[0][1].item()
+                ax.text(start_x, start_y-8, _string, color='black', bbox={'facecolor': colors[idx], 'alpha': 0.5, 'pad': 1})
