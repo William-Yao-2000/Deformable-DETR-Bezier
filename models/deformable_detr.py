@@ -346,7 +346,7 @@ def build(args):
     elif args.dataset_file == 'coco_panoptic':
         num_classes = 250
     elif args.dataset_file == 'synthtext':  # 数据集中类的数目，synthtext recog: 94
-        num_classes = (69, 2)
+        num_classes = (95, 2)
     device = torch.device(args.device)
 
     # 创建 deformable-DETR 模型
