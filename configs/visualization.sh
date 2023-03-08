@@ -7,7 +7,7 @@ box_refine_flag=1
 modelpath=""
 if [ ${box_refine_flag} -eq 1 ]
 then
-    modelpath="./exps/v002-box-refine/checkpoint0014.pth"
+    modelpath="./exps/v002-relative_coord-box_refine/checkpoint0015.pth"
 else
     modelpath="./exps/v002-absolute_coord-no_aux_loss/checkpoint0014.pth"
 fi
@@ -19,15 +19,15 @@ imgpath_lst="8/ballet_3_0.jpg     12/batman_3_24.jpg  72/hiking_5_32.jpg  160/st
 for imgpath in ${imgpath_lst}
 do
     echo "\n\n\n----------------${imgpath}----------------"
-    imgpath="/DATACENTER/s/yaowenhao/proj/Deformable-DETR-SynthText-recog/data/synthtext/SynthText/${imgpath}"
+    imgpath="/DATACENTER/raid0/yaowenhao/proj/Deformable-DETR-Synthtext-recog/data/synthtext/SynthText/${imgpath}"
     if [ ${box_refine_flag} -eq 1 ]
     then  # 加载有 bbox refinement 选项的模型
-        python inference_visualization_connect.py \
+        python inference_visualization_one_shot.py \
             --with_box_refine \
             --resume=${modelpath} \
             --inference_img_path=${imgpath}
     else
-        python inference_visualization_connect.py \
+        python inference_visualization_one_shot.py \
             --no_aux_loss \
             --resume=${modelpath} \
             --inference_img_path=${imgpath}
