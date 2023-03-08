@@ -43,19 +43,23 @@ print(datas.keys())
 n_row = 1
 n_col = 2
 fig, axs = plt.subplots(n_row, n_col, figsize=(11, 5))
-line_sst = ['r*--', 'g*-', 'm--', 'grey', 'b*--', 'black']
-marker_sst = ['.','+','x','.','+','x']
+line_sst = [np.random.rand(3)*0.6+0.4 for _ in range(len(datas))]
+marker_sst = ['.','+','x','.','+','x','.']
 label_sst = []
 x_lab_sst = ['x','x']
 y_lab_sst = ['y','y']
 title_sst = ['title_1','title_2','title_3','title_4']
 idx = 0
 
+ignored_keys = ('bezier-absolute_coord')
+
 def subplot(ax, datas, ylabel):
     cnt = 0
-    for k, data in datas.items():
-        ax.plot(data, line_sst[cnt], marker=marker_sst[cnt], linewidth=1., label=k)
-        cnt += 1
+    for k, data in sorted(datas.items()):
+        if k not in ignored_keys:
+            ls = '--' if k.startswith('recog') else '-'
+            ax.plot(data, color=line_sst[cnt], marker=marker_sst[cnt%3], linestyle=ls, linewidth=1.2, label=k)
+            cnt += 1
     ax.legend(loc='lower right') # 图例位置
     ax.set_xlabel('epoch')
     ax.set_ylabel(ylabel)
