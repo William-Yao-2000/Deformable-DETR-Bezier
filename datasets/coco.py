@@ -191,6 +191,11 @@ def make_coco_transforms(image_set):
             T.RandomResize([800], max_size=img_max_size),
             normalize,
         ])
+    
+    if image_set == 'test':
+        return T.Compose([
+            normalize,
+        ])
 
     raise ValueError(f'unknown {image_set}')
 
