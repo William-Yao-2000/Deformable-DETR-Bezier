@@ -74,9 +74,11 @@ class COCOVisualizer():
         #     import ipdb; ipdb.set_trace()
         ax.imshow(img)
         
-        # self.addtgt_c(tgt_c, res_lst)
         self.addtgt_b(tgt_b)
-        self.addtgt_p(tgt_p)
+        if tgt_p is not None:
+            self.addtgt_p(tgt_p)
+        else:
+            self.addtgt_c(tgt_c, res_lst)
         if show_in_console:
             plt.show()
 

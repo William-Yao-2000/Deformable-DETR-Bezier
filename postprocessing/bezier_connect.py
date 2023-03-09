@@ -59,7 +59,8 @@ class BezierConnector():
             result_i = set(result_i)
             res &= result_i
         if len(res) > 1:
-            print("Warning: the len of set is {}".format(len(res)))
+            # print("Warning: the len of set is {}".format(len(res)))
+            pass
         if len(res) == 0:
             return None
         for b in res:
@@ -101,17 +102,17 @@ class BezierConnector():
             s = ""
             for idx in lst:
                 s += self.labels[idx]
-            print("{}: {}".format(i, s))
+            # print("{}: {}".format(i, s))
         return self.res_lst
     
-    def get_poly_one_curve(self, bezier_idx, n=5):
+    def get_poly_one_curve(self, bezier_idx, poly_n=5):
         assert bezier_idx in self.mapper
         box_lst = self.res_lst[self.mapper[bezier_idx]]
         bn = len(box_lst)
         ref_num = max(2, bn//3+1)  # 每个顶点处的长度是平均了附近的 ref_num 个 box 的有关长度得来的
         xs = self.points[bezier_idx][0::2].unsqueeze(0)  # [1, 4]
         ys = self.points[bezier_idx][1::2].unsqueeze(0)
-        t = torch.linspace(0, 1, steps=n, dtype=xs.dtype, device=xs.device)  # [n,]
+        t = torch.linspace(0, 1, steps=poly_n, dtype=xs.dtype, device=xs.device)  # [n,]
         c0, c1, c2, c3 = (1-t)**3, 3 * (1-t)**2 * t, 3 * t**2 * (1-t), t**3
         cs = torch.stack((c0, c1, c2, c3), dim=-1)  # [n, 4]
         x, y = (cs*xs).sum(dim=1), (cs*ys).sum(dim=1)  # [n,]
@@ -119,28 +120,32 @@ class BezierConnector():
         q0, q1, q2, q3 = -3*t**2 + 6*t - 3, 9*t**2 - 12*t + 3, -9*t**2 + 6*t, 3*t**2
         qs = torch.stack((q0, q1, q2, q3), dim=-1)  # [n, 4]
         dx, dy = (qs*xs).sum(dim=1), (qs*ys).sum(dim=1)  # [n,]
-        poly_vertex = torch.zeros(n*2, 2)
+        poly_vertex = torch.zeros(poly_n*2, 2)
         tmp_boxes = self.boxes[box_lst, :]
         max_height = torch.max(tmp_boxes[:,3]-tmp_boxes[:,1])
         max_width = torch.max(tmp_boxes[:,2]-tmp_boxes[:,0])
         maxi = torch.max(max_height, max_width)
-        for i in range(n):
+        for i in range(poly_n):
             radius = maxi
             # 先暂时这样干吧
             rad = math.atan2(dx[i].item(), -dy[i].item())
             _dx, _dy = radius/2 * math.cos(rad), radius/2 * math.sin(rad)
             poly_vertex[i][0] = x[i] - _dx
             poly_vertex[i][1] = y[i] - _dy
-            poly_vertex[n*2-i-1][0] = x[i] + _dx
-            poly_vertex[n*2-i-1][1] = y[i] + _dy
+            poly_vertex[poly_n*2-i-1][0] = x[i] + _dx
+            poly_vertex[poly_n*2-i-1][1] = y[i] + _dy
         self.polygons.append(poly_vertex)
 
-    def get_poly(self):
+    def get_poly(self, poly_n=5):
+        """
+        Args:
+            poly_n (int): 多边形一侧的顶点个数
+        """
         self.polygons = []
         for bezier_idx, sub_lst_idx in self.mapper.items():
             word_len = len(self.res_lst[sub_lst_idx])
-            self.get_poly_one_curve(bezier_idx)
+            self.get_poly_one_curve(bezier_idx, poly_n=poly_n)
         self.polygons = torch.stack(self.polygons, dim=0)
-        print("POLYGON SHAPE:")
-        print(self.polygons.shape)
+        # print("POLYGON SHAPE:")
+        # print(self.polygons.shape)
         return self.polygons

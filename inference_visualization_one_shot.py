@@ -418,7 +418,7 @@ def inference(model, img_path, device, transforms, num2char, model_ver):
     print(res_lst)
     print(len(res_lst))
     
-    polygons = bct.get_poly()
+    polygons = bct.get_poly(poly_n=2)
     poly_label = []
     for lst in res_lst:
         _string = ""
